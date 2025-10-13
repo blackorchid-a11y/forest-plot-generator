@@ -9,21 +9,26 @@
        "build-mac": "electron-builder --mac"
      },
      "build": {
-       "appId": "com.forestplot.generator",
-       "productName": "Forest Plot Generator",
-       "win": {
-         "target": [
-           {
-             "target": "nsis",
-             "arch": ["x64"]
-           }
-         ]
-       },
-       "nsis": {
-         "oneClick": false,
-         "allowToChangeInstallationDirectory": true
-       }
-     },
+  "appId": "com.forestplot.generator",
+  "productName": "Forest Plot Generator",
+  "publish": null,
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "mac": {
+    "target": "dmg",
+    "category": "public.app-category.productivity"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  }
+},
      "devDependencies": {
        "electron": "^28.0.0",
        "electron-builder": "^24.9.0"
