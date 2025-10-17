@@ -14,6 +14,9 @@ function createWindow() {
   win.loadFile('index.html');
   win.setMenuBarVisibility(false);
   win.maximize();
+  
+  // Open DevTools automatically in development
+  win.webContents.openDevTools();
 }
 
 app.whenReady().then(createWindow);
