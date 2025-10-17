@@ -48,50 +48,97 @@ function ForestPlotGenerator() {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (type === 'csv') {
-      Papa.parse(file, {
-        header: true,
-        dynamicTyping: true,
-        skipEmptyLines: true,
-        complete: (results) => {
-          const parsed = results.data.map((row, idx) => ({
-            id: idx + 1,
-            variable: row.Variable || row.variable || row.name || `Variable ${idx + 1}`,
-            or: parseFloat(row.OR || row.or || row.odds_ratio) || 1.0,
-            lowerCI: parseFloat(row.LowerCI || row.lower_ci || row.lower) || 0.8,
-            upperCI: parseFloat(row.UpperCI || row.upper_ci || row.upper) || 1.2,
-            pValue: parseFloat(row.PValue || row.p_value || row.pvalue || row.p) || 0.05,
-            sampleSize: row.SampleSize || row.sample_size || row.n || '',
-            group: row.Group || row.group || '',
-            color: 'auto'
-          }));
-          setData(parsed);
+    try {
+      if (type === 'csv') {
+        Papa.parse(file, {
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true,
+          complete: (results) => {
+            try {
+              const parsed = results.data.map((row, idx) => ({
+                id: idx + 1,
+                variable: row.Variable || row.variable || row.name || `Variable ${idx + 1}`,
+                or: parseFloat(row.OR || row.or || row.odds_ratio) || 1.0,
+                lowerCI: parseFloat(row.LowerCI || row.lower_ci || row.lower) || 0.8,
+                upperCI: parseFloat(row.UpperCI || row.upper_ci || row.upper) || 1.2,
+                pValue: parseFloat(row.PValue || row.p_value || row.pvalue || row.p) || 0.05,
+                sampleSize: row.SampleSize || row.sample_size || row.n || '',
+                group: row.Group || row.group || '',
+                color: 'auto'
+              }));
+              setData(parsed);
+              setInputMode('manual');
+              alert(`Successfully imported ${parsed.length} rows from CSV file`);
+            } catch (error) {
+              console.error('CSV parsing error:', error);
+              alert('Error parsing CSV file: ' + error.message);
+            }
+          },
+          error: (error) => {
+            console.error('CSV upload error:', error);
+            alert('Error reading CSV file: ' + error.message);
+          }
+        });
+      } else if (type === 'xlsx') {
+        console.log('Starting Excel file upload...');
+
+        // Check if XLSX is available
+        if (typeof XLSX === 'undefined') {
+          throw new Error('XLSX library not loaded. Please refresh the page and try again.');
         }
-      });
-    } else if (type === 'xlsx') {
-      const arrayBuffer = await file.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer);
-      const sheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet);
-      
-      const parsed = jsonData.map((row, idx) => ({
-        id: idx + 1,
-        variable: row.Variable || row.variable || row.name || `Variable ${idx + 1}`,
-        or: parseFloat(row.OR || row.or || row.odds_ratio) || 1.0,
-        lowerCI: parseFloat(row.LowerCI || row.lower_ci || row.lower) || 0.8,
-        upperCI: parseFloat(row.UpperCI || row.upper_ci || row.upper) || 1.2,
-        pValue: parseFloat(row.PValue || row.p_value || row.pvalue || row.p) || 0.05,
-        sampleSize: row.SampleSize || row.sample_size || row.n || '',
-        group: row.Group || row.group || '',
-        color: 'auto'
-      }));
-      setData(parsed);
+
+        console.log('XLSX library available:', XLSX);
+        const arrayBuffer = await file.arrayBuffer();
+        console.log('File read into arrayBuffer');
+
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        console.log('Workbook loaded, sheets:', workbook.SheetNames);
+
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+        console.log('JSON data extracted:', jsonData.length, 'rows');
+
+        const parsed = jsonData.map((row, idx) => ({
+          id: idx + 1,
+          variable: row.Variable || row.variable || row.name || `Variable ${idx + 1}`,
+          or: parseFloat(row.OR || row.or || row.odds_ratio) || 1.0,
+          lowerCI: parseFloat(row.LowerCI || row.lower_ci || row.lower) || 0.8,
+          upperCI: parseFloat(row.UpperCI || row.upper_ci || row.upper) || 1.2,
+          pValue: parseFloat(row.PValue || row.p_value || row.pvalue || row.p) || 0.05,
+          sampleSize: row.SampleSize || row.sample_size || row.n || '',
+          group: row.Group || row.group || '',
+          color: 'auto'
+        }));
+
+        console.log('Parsed data:', parsed);
+        setData(parsed);
+        setInputMode('manual');
+        alert(`Successfully imported ${parsed.length} rows from Excel file`);
+      }
+    } catch (error) {
+      console.error('File upload error:', error);
+      alert('Error uploading file: ' + error.message);
     }
+
+    // Reset file input to allow re-uploading the same file
+    e.target.value = '';
   };
 
   const isSignificant = (lowerCI, upperCI) => {
     return !(lowerCI <= 1.0 && upperCI >= 1.0);
+  };
+
+  const isValidData = (row) => {
+    // Check if OR and CI values are valid numbers
+    const { or, lowerCI, upperCI } = row;
+    if (isNaN(or) || isNaN(lowerCI) || isNaN(upperCI)) return false;
+    if (or === null || lowerCI === null || upperCI === null) return false;
+    if (or === undefined || lowerCI === undefined || upperCI === undefined) return false;
+    if (or <= 0 || lowerCI <= 0 || upperCI <= 0) return false;
+    if (lowerCI >= upperCI) return false;
+    return true;
   };
 
   const getBarColor = (row) => {
@@ -181,9 +228,10 @@ function ForestPlotGenerator() {
     const plotWidth = settings.plotWidth - margin.left - margin.right;
     const plotHeight = settings.plotHeight - margin.top - margin.bottom;
     
-    const allValues = data.flatMap(d => [d.lowerCI, d.or, d.upperCI]);
-    const minVal = Math.min(...allValues, 0.1);
-    const maxVal = Math.max(...allValues, 10);
+    const validData = data.filter(d => isValidData(d));
+    const allValues = validData.flatMap(d => [d.lowerCI, d.or, d.upperCI]);
+    const minVal = allValues.length > 0 ? Math.min(...allValues, 0.1) : 0.1;
+    const maxVal = allValues.length > 0 ? Math.max(...allValues, 10) : 10;
     
     const xScale = (val) => {
       const scaled = scaleValue(val);
@@ -250,18 +298,40 @@ function ForestPlotGenerator() {
       
       data.map((row, idx) => {
         const y = margin.top + (idx + 0.5) * rowHeight;
+        const isValid = isValidData(row);
+
+        // For invalid data, only show the variable name and "Invalid" status
+        if (!isValid) {
+          return React.createElement('g', { key: row.id },
+            React.createElement('text', {
+              x: margin.left - 10,
+              y: y + 5,
+              textAnchor: 'end'
+            }, row.variable),
+
+            React.createElement('text', {
+              x: settings.plotWidth - margin.right + 10,
+              y: y + 5,
+              textAnchor: 'start',
+              fill: '#FF0000',
+              fontStyle: 'italic'
+            }, 'Invalid OR/CI')
+          );
+        }
+
+        // For valid data, render normally
         const x1 = xScale(row.lowerCI);
         const x2 = xScale(row.upperCI);
         const xCenter = xScale(row.or);
         const color = getBarColor(row);
-        
+
         return React.createElement('g', { key: row.id },
           React.createElement('text', {
             x: margin.left - 10,
             y: y + 5,
             textAnchor: 'end'
           }, row.variable),
-          
+
           React.createElement('line', {
             x1: x1,
             y1: y,
@@ -270,7 +340,7 @@ function ForestPlotGenerator() {
             stroke: color,
             strokeWidth: '2'
           }),
-          
+
           React.createElement('line', {
             x1: x1,
             y1: y - 5,
@@ -279,7 +349,7 @@ function ForestPlotGenerator() {
             stroke: color,
             strokeWidth: '2'
           }),
-          
+
           React.createElement('line', {
             x1: x2,
             y1: y - 5,
@@ -288,7 +358,7 @@ function ForestPlotGenerator() {
             stroke: color,
             strokeWidth: '2'
           }),
-          
+
           React.createElement('rect', {
             x: xCenter - 4,
             y: y - 4,
@@ -296,7 +366,7 @@ function ForestPlotGenerator() {
             height: 8,
             fill: color
           }),
-          
+
           React.createElement('text', {
             x: settings.plotWidth - margin.right + 10,
             y: y + 5,
@@ -306,9 +376,12 @@ function ForestPlotGenerator() {
       }),
       
       settings.metaAnalysis && (() => {
-        const pooledOR = data.reduce((sum, d) => sum + d.or, 0) / data.length;
-        const pooledLower = data.reduce((sum, d) => sum + d.lowerCI, 0) / data.length;
-        const pooledUpper = data.reduce((sum, d) => sum + d.upperCI, 0) / data.length;
+        const validDataForMeta = data.filter(d => isValidData(d));
+        if (validDataForMeta.length === 0) return null;
+
+        const pooledOR = validDataForMeta.reduce((sum, d) => sum + d.or, 0) / validDataForMeta.length;
+        const pooledLower = validDataForMeta.reduce((sum, d) => sum + d.lowerCI, 0) / validDataForMeta.length;
+        const pooledUpper = validDataForMeta.reduce((sum, d) => sum + d.upperCI, 0) / validDataForMeta.length;
         const y = margin.top + (data.length + 0.5) * rowHeight;
         const xCenter = xScale(pooledOR);
         
@@ -380,26 +453,26 @@ function ForestPlotGenerator() {
           }, 'Manual Entry'),
           
           React.createElement('label', {
-            className: `px-4 py-2 rounded cursor-pointer ${inputMode === 'csv' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`
+            className: 'px-4 py-2 rounded cursor-pointer bg-green-600 text-white hover:bg-green-700'
           },
             'CSV Upload',
             React.createElement('input', {
               type: 'file',
               accept: '.csv',
               className: 'hidden',
-              onChange: (e) => { setInputMode('csv'); handleFileUpload(e, 'csv'); }
+              onChange: (e) => handleFileUpload(e, 'csv')
             })
           ),
-          
+
           React.createElement('label', {
-            className: `px-4 py-2 rounded cursor-pointer ${inputMode === 'xlsx' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`
+            className: 'px-4 py-2 rounded cursor-pointer bg-green-600 text-white hover:bg-green-700'
           },
             'Excel Upload',
             React.createElement('input', {
               type: 'file',
               accept: '.xlsx',
               className: 'hidden',
-              onChange: (e) => { setInputMode('xlsx'); handleFileUpload(e, 'xlsx'); }
+              onChange: (e) => handleFileUpload(e, 'xlsx')
             })
           )
         ),
