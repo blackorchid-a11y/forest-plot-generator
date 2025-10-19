@@ -1,6 +1,74 @@
 const { useState, useRef, useEffect } = React;
 const { Download, Upload, Plus, Trash2 } = lucide;
 
+// Comprehensive color palette
+const COLOR_PALETTE = [
+  { name: 'Auto', value: 'auto' },
+  { name: 'Black', value: '#000000' },
+  { name: 'Dark Gray', value: '#4A4A4A' },
+  { name: 'Medium Gray', value: '#808080' },
+  { name: 'Light Gray', value: '#BDBDBD' },
+  
+  // Blues
+  { name: 'Navy Blue', value: '#001F3F' },
+  { name: 'Royal Blue', value: '#0047AB' },
+  { name: 'Blue', value: '#0074D9' },
+  { name: 'Sky Blue', value: '#7FDBFF' },
+  { name: 'Light Blue', value: '#87CEEB' },
+  { name: 'Teal', value: '#39CCCC' },
+  { name: 'Cyan', value: '#00BFFF' },
+  
+  // Greens
+  { name: 'Dark Green', value: '#006400' },
+  { name: 'Forest Green', value: '#228B22' },
+  { name: 'Green', value: '#2ECC40' },
+  { name: 'Lime Green', value: '#32CD32' },
+  { name: 'Olive', value: '#3D9970' },
+  { name: 'Mint', value: '#98FB98' },
+  { name: 'Emerald', value: '#50C878' },
+  
+  // Reds/Pinks
+  { name: 'Maroon', value: '#800000' },
+  { name: 'Dark Red', value: '#8B0000' },
+  { name: 'Red', value: '#FF4136' },
+  { name: 'Crimson', value: '#DC143C' },
+  { name: 'Coral', value: '#FF6B6B' },
+  { name: 'Pink', value: '#FF69B4' },
+  { name: 'Magenta', value: '#FF00FF' },
+  { name: 'Rose', value: '#FF007F' },
+  
+  // Oranges/Yellows
+  { name: 'Dark Orange', value: '#FF8C00' },
+  { name: 'Orange', value: '#FF851B' },
+  { name: 'Light Orange', value: '#FFA500' },
+  { name: 'Gold', value: '#FFD700' },
+  { name: 'Yellow', value: '#FFDC00' },
+  { name: 'Amber', value: '#FFBF00' },
+  { name: 'Mustard', value: '#FFDB58' },
+  
+  // Purples
+  { name: 'Indigo', value: '#4B0082' },
+  { name: 'Purple', value: '#800080' },
+  { name: 'Violet', value: '#B10DC9' },
+  { name: 'Lavender', value: '#E6E6FA' },
+  { name: 'Plum', value: '#DDA0DD' },
+  { name: 'Orchid', value: '#DA70D6' },
+  
+  // Browns
+  { name: 'Brown', value: '#8B4513' },
+  { name: 'Chocolate', value: '#D2691E' },
+  { name: 'Sienna', value: '#A0522D' },
+  { name: 'Tan', value: '#D2B48C' },
+  { name: 'Beige', value: '#F5F5DC' },
+  
+  // Others
+  { name: 'Turquoise', value: '#40E0D0' },
+  { name: 'Salmon', value: '#FA8072' },
+  { name: 'Peach', value: '#FFE5B4' },
+  { name: 'Khaki', value: '#F0E68C' },
+  { name: 'Silver', value: '#C0C0C0' }
+];
+
 // Excel Import Wizard Component (must be outside main component)
 function ExcelImportWizard({ excelData, onImport, onCancel }) {
   const [step, setStep] = useState(1);
@@ -200,7 +268,7 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
             upperCI: '* Upper CI',
             pValue: 'P-Value (Optional)',
             sampleSize: 'Sample Size (Optional)',
-            group: 'Group (Optional)'
+            group: 'Group/Section (Optional)'
           }).map(([field, label]) => 
             React.createElement('div', { key: field },
               React.createElement('label', { className: 'block font-semibold mb-2' }, label),
@@ -244,9 +312,9 @@ function ForestPlotGenerator() {
   const [data, setData] = useState([
     { id: 1, variable: 'Variable 1', or: 1.5, lowerCI: 1.2, upperCI: 1.9, pValue: 0.001, sampleSize: '', group: '', color: 'auto' }
   ]);
-  const [excelData, setExcelData] = useState(null); // Store full Excel workbook
+  const [excelData, setExcelData] = useState(null);
   const [showExcelImport, setShowExcelImport] = useState(false);
-  const [datasets, setDatasets] = useState([{ id: 1, name: 'Dataset 1', data: [] }]); // Multiple datasets
+  const [datasets, setDatasets] = useState([{ id: 1, name: 'Dataset 1', data: [] }]);
   const [activeDatasetId, setActiveDatasetId] = useState(1);
   const [settings, setSettings] = useState({
     scale: 'linear',
@@ -257,7 +325,13 @@ function ForestPlotGenerator() {
     title: 'Forest Plot',
     footnote: 'Error bars represent 95% confidence intervals',
     plotWidth: 800,
-    plotHeight: 600
+    plotHeight: 600,
+    groupSpacing: 30,
+    // X-axis settings
+    xAxisMode: 'auto', // 'auto' or 'manual'
+    xAxisMin: '',
+    xAxisMax: '',
+    xAxisTicks: '' // comma-separated values
   });
   const svgRef = useRef(null);
 
@@ -313,7 +387,6 @@ function ForestPlotGenerator() {
               const rawData = results.data;
               const headers = Object.keys(rawData[0] || {});
               
-              // Simple import for CSV - just map first columns
               const parsed = rawData.map((row, idx) => ({
                 id: idx + 1,
                 variable: row[headers[0]] || `Variable ${idx + 1}`,
@@ -372,7 +445,6 @@ function ForestPlotGenerator() {
   };
 
   const isValidData = (row) => {
-    // Check if OR and CI values are valid numbers
     const { or, lowerCI, upperCI } = row;
     if (isNaN(or) || isNaN(lowerCI) || isNaN(upperCI)) return false;
     if (or === null || lowerCI === null || upperCI === null) return false;
@@ -392,6 +464,83 @@ function ForestPlotGenerator() {
       return Math.log(value);
     }
     return value;
+  };
+
+  const groupDataBySections = () => {
+    const groups = {};
+    
+    data.forEach(row => {
+      const groupName = row.group || 'Ungrouped';
+      if (!groups[groupName]) {
+        groups[groupName] = [];
+      }
+      groups[groupName].push(row);
+    });
+    
+    return groups;
+  };
+
+  // Generate smart tick marks based on data range
+  const generateSmartTicks = (minVal, maxVal, scale) => {
+    if (scale === 'log') {
+      // For log scale, use powers and half-powers
+      const logMin = Math.log10(minVal);
+      const logMax = Math.log10(maxVal);
+      const ticks = [];
+      
+      // Generate major ticks at powers of 10
+      let power = Math.floor(logMin);
+      while (Math.pow(10, power) <= maxVal * 1.1) {
+        const val = Math.pow(10, power);
+        if (val >= minVal * 0.9) {
+          ticks.push(val);
+        }
+        power++;
+      }
+      
+      // Add intermediate ticks (0.5, 2, 5 pattern)
+      const intermediate = [];
+      for (let i = 0; i < ticks.length - 1; i++) {
+        const start = ticks[i];
+        const end = ticks[i + 1];
+        if (start * 2 < end && start * 2 >= minVal * 0.9 && start * 2 <= maxVal * 1.1) {
+          intermediate.push(start * 2);
+        }
+        if (start * 5 < end && start * 5 >= minVal * 0.9 && start * 5 <= maxVal * 1.1) {
+          intermediate.push(start * 5);
+        }
+      }
+      
+      return [...ticks, ...intermediate].sort((a, b) => a - b).filter(v => v >= minVal * 0.9 && v <= maxVal * 1.1);
+    } else {
+      // For linear scale
+      const range = maxVal - minVal;
+      let step;
+      
+      // Determine nice step size
+      const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
+      const normalized = range / magnitude;
+      
+      if (normalized < 1.5) step = 0.2 * magnitude;
+      else if (normalized < 3) step = 0.5 * magnitude;
+      else if (normalized < 7) step = 1 * magnitude;
+      else step = 2 * magnitude;
+      
+      const ticks = [];
+      let tick = Math.ceil(minVal / step) * step;
+      while (tick <= maxVal) {
+        ticks.push(tick);
+        tick += step;
+      }
+      
+      // Always include 1.0 if it's in range
+      if (minVal < 1.0 && maxVal > 1.0 && !ticks.includes(1.0)) {
+        ticks.push(1.0);
+        ticks.sort((a, b) => a - b);
+      }
+      
+      return ticks;
+    }
   };
 
   const downloadSVG = () => {
@@ -471,17 +620,303 @@ function ForestPlotGenerator() {
     
     const validData = data.filter(d => isValidData(d));
     const allValues = validData.flatMap(d => [d.lowerCI, d.or, d.upperCI]);
-    const minVal = allValues.length > 0 ? Math.min(...allValues, 0.1) : 0.1;
-    const maxVal = allValues.length > 0 ? Math.max(...allValues, 10) : 10;
+    
+    // Determine X-axis range
+    let minVal, maxVal;
+    if (settings.xAxisMode === 'manual' && settings.xAxisMin !== '' && settings.xAxisMax !== '') {
+      minVal = parseFloat(settings.xAxisMin);
+      maxVal = parseFloat(settings.xAxisMax);
+    } else {
+      // Auto mode - better calculation
+      if (allValues.length === 0) {
+        minVal = 0.1;
+        maxVal = 10;
+      } else {
+        const dataMin = Math.min(...allValues);
+        const dataMax = Math.max(...allValues);
+        const range = dataMax - dataMin;
+        
+        // Add 15% padding on each side for better visualization
+        const padding = range * 0.15;
+        minVal = Math.max(0.01, dataMin - padding);
+        maxVal = dataMax + padding;
+        
+        // Round to nice numbers
+        if (settings.scale === 'log') {
+          minVal = Math.pow(10, Math.floor(Math.log10(minVal)));
+          maxVal = Math.pow(10, Math.ceil(Math.log10(maxVal)));
+        } else {
+          const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
+          minVal = Math.floor(minVal / magnitude) * magnitude;
+          maxVal = Math.ceil(maxVal / magnitude) * magnitude;
+        }
+      }
+    }
     
     const xScale = (val) => {
       const scaled = scaleValue(val);
-      const minScaled = scaleValue(minVal * 0.8);
-      const maxScaled = scaleValue(maxVal * 1.2);
+      const minScaled = scaleValue(minVal);
+      const maxScaled = scaleValue(maxVal);
       return margin.left + (scaled - minScaled) / (maxScaled - minScaled) * plotWidth;
     };
     
-    const rowHeight = plotHeight / (data.length + (settings.metaAnalysis ? 1 : 0));
+    // Generate tick marks
+    let tickValues;
+    if (settings.xAxisMode === 'manual' && settings.xAxisTicks !== '') {
+      tickValues = settings.xAxisTicks.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v) && v >= minVal && v <= maxVal);
+    } else {
+      tickValues = generateSmartTicks(minVal, maxVal, settings.scale);
+    }
+    
+    // Group data into sections
+    const groupedData = groupDataBySections();
+    const groupNames = Object.keys(groupedData);
+    
+    // Calculate total rows including section headers
+    let totalRows = data.length + groupNames.length;
+    if (settings.metaAnalysis) totalRows += 1;
+    
+    const baseRowHeight = (plotHeight - (groupNames.length * settings.groupSpacing)) / totalRows;
+    let currentY = margin.top;
+    
+    const elements = [];
+    
+    // Header labels
+    elements.push(
+      React.createElement('text', {
+        key: 'header-title',
+        x: settings.plotWidth / 2,
+        y: 30,
+        textAnchor: 'middle',
+        fontSize: settings.fontSize + 4,
+        fontWeight: 'bold'
+      }, settings.title)
+    );
+    
+    elements.push(
+      React.createElement('text', {
+        key: 'header-var',
+        x: margin.left - 10,
+        y: margin.top - 20,
+        textAnchor: 'end',
+        fontWeight: 'bold'
+      }, 'Variable')
+    );
+    
+    elements.push(
+      React.createElement('text', {
+        key: 'header-or',
+        x: settings.plotWidth - margin.right + 10,
+        y: margin.top - 20,
+        textAnchor: 'start',
+        fontWeight: 'bold'
+      }, 'OR (95% CI)')
+    );
+    
+    // Vertical line at OR=1 (only if 1 is in range)
+    if (minVal < 1.0 && maxVal > 1.0) {
+      elements.push(
+        React.createElement('line', {
+          key: 'vertical-line',
+          x1: xScale(1),
+          y1: margin.top,
+          x2: xScale(1),
+          y2: settings.plotHeight - margin.bottom,
+          stroke: '#000',
+          strokeWidth: '1.5'
+        })
+      );
+    }
+    
+    // Gridlines
+    if (settings.showGridlines) {
+      tickValues.forEach((val, idx) => {
+        if (val !== 1.0) { // Don't duplicate the main vertical line
+          elements.push(
+            React.createElement('line', {
+              key: `grid-${idx}`,
+              x1: xScale(val),
+              y1: margin.top,
+              x2: xScale(val),
+              y2: settings.plotHeight - margin.bottom,
+              stroke: '#ddd',
+              strokeWidth: '1',
+              strokeDasharray: '3,3'
+            })
+          );
+        }
+      });
+    }
+    
+    // Render each group/section
+    groupNames.forEach((groupName, groupIdx) => {
+      const groupRows = groupedData[groupName];
+      
+      // Section header
+      if (groupName && groupName !== 'Ungrouped' && groupName.trim() !== '') {
+        elements.push(
+          React.createElement('text', {
+            key: `section-${groupIdx}`,
+            x: margin.left - 10,
+            y: currentY + 5,
+            textAnchor: 'end',
+            fontWeight: 'bold',
+            fontSize: settings.fontSize + 2,
+            fill: '#000000'
+          }, groupName)
+        );
+        
+        currentY += baseRowHeight + settings.groupSpacing;
+      }
+      
+      // Render rows in this group
+      groupRows.forEach((row, rowIdx) => {
+        const y = currentY + baseRowHeight / 2;
+        const isValid = isValidData(row);
+
+        if (!isValid) {
+          elements.push(
+            React.createElement('g', { key: `row-${row.id}` },
+              React.createElement('text', {
+                x: margin.left - 10,
+                y: y + 5,
+                textAnchor: 'end'
+              }, row.variable),
+
+              React.createElement('text', {
+                x: settings.plotWidth - margin.right + 10,
+                y: y + 5,
+                textAnchor: 'start',
+                fill: '#FF0000',
+                fontStyle: 'italic'
+              }, 'Invalid OR/CI')
+            )
+          );
+        } else {
+          const x1 = xScale(Math.max(row.lowerCI, minVal));
+          const x2 = xScale(Math.min(row.upperCI, maxVal));
+          const xCenter = xScale(row.or);
+          const color = getBarColor(row);
+
+          elements.push(
+            React.createElement('g', { key: `row-${row.id}` },
+              React.createElement('text', {
+                x: margin.left - 10,
+                y: y + 5,
+                textAnchor: 'end'
+              }, row.variable),
+
+              React.createElement('line', {
+                x1: x1,
+                y1: y,
+                x2: x2,
+                y2: y,
+                stroke: color,
+                strokeWidth: '2'
+              }),
+
+              React.createElement('line', {
+                x1: x1,
+                y1: y - 5,
+                x2: x1,
+                y2: y + 5,
+                stroke: color,
+                strokeWidth: '2'
+              }),
+
+              React.createElement('line', {
+                x1: x2,
+                y1: y - 5,
+                x2: x2,
+                y2: y + 5,
+                stroke: color,
+                strokeWidth: '2'
+              }),
+
+              React.createElement('rect', {
+                x: xCenter - 4,
+                y: y - 4,
+                width: 8,
+                height: 8,
+                fill: color
+              }),
+
+              React.createElement('text', {
+                x: settings.plotWidth - margin.right + 10,
+                y: y + 5,
+                textAnchor: 'start'
+              }, `${row.or.toFixed(2)} (${row.lowerCI.toFixed(2)}-${row.upperCI.toFixed(2)})`)
+            )
+          );
+        }
+        
+        currentY += baseRowHeight;
+      });
+    });
+    
+    // Meta-analysis pooled effect
+    if (settings.metaAnalysis) {
+      const validDataForMeta = data.filter(d => isValidData(d));
+      if (validDataForMeta.length > 0) {
+        const pooledOR = validDataForMeta.reduce((sum, d) => sum + d.or, 0) / validDataForMeta.length;
+        const pooledLower = validDataForMeta.reduce((sum, d) => sum + d.lowerCI, 0) / validDataForMeta.length;
+        const pooledUpper = validDataForMeta.reduce((sum, d) => sum + d.upperCI, 0) / validDataForMeta.length;
+        const y = currentY + baseRowHeight / 2;
+        const xCenter = xScale(pooledOR);
+        
+        elements.push(
+          React.createElement('g', { key: 'pooled-effect' },
+            React.createElement('text', {
+              x: margin.left - 10,
+              y: y + 5,
+              textAnchor: 'end',
+              fontWeight: 'bold'
+            }, 'Pooled Effect'),
+            
+            React.createElement('path', {
+              d: `M ${xCenter} ${y - 8} L ${xCenter + 8} ${y} L ${xCenter} ${y + 8} L ${xCenter - 8} ${y} Z`,
+              fill: '#000'
+            }),
+            
+            React.createElement('text', {
+              x: settings.plotWidth - margin.right + 10,
+              y: y + 5,
+              textAnchor: 'start',
+              fontWeight: 'bold'
+            }, `${pooledOR.toFixed(2)} (${pooledLower.toFixed(2)}-${pooledUpper.toFixed(2)})`)
+          )
+        );
+      }
+    }
+    
+    // X-axis labels
+    tickValues.forEach((val, idx) => {
+      const displayVal = settings.scale === 'log' ? 
+        (val >= 1 ? val.toFixed(0) : val.toFixed(2)) :
+        (val >= 10 ? val.toFixed(0) : val.toFixed(1));
+      
+      elements.push(
+        React.createElement('text', {
+          key: `xaxis-${idx}`,
+          x: xScale(val),
+          y: settings.plotHeight - margin.bottom + 20,
+          textAnchor: 'middle',
+          fontSize: settings.fontSize - 2
+        }, displayVal)
+      );
+    });
+    
+    // Footnote
+    elements.push(
+      React.createElement('text', {
+        key: 'footnote',
+        x: settings.plotWidth / 2,
+        y: settings.plotHeight - 20,
+        textAnchor: 'middle',
+        fontSize: settings.fontSize - 2,
+        fontStyle: 'italic'
+      }, settings.footnote)
+    );
     
     return React.createElement('svg', {
       ref: svgRef,
@@ -489,196 +924,13 @@ function ForestPlotGenerator() {
       height: settings.plotHeight,
       style: { fontFamily: settings.font, fontSize: settings.fontSize }
     },
-      React.createElement('rect', { width: settings.plotWidth, height: settings.plotHeight, fill: 'white' }),
-      
-      React.createElement('text', {
-        x: settings.plotWidth / 2,
-        y: 30,
-        textAnchor: 'middle',
-        fontSize: settings.fontSize + 4,
-        fontWeight: 'bold'
-      }, settings.title),
-      
-      React.createElement('text', {
-        x: margin.left - 10,
-        y: margin.top - 20,
-        textAnchor: 'end',
-        fontWeight: 'bold'
-      }, 'Variable'),
-      
-      React.createElement('text', {
-        x: settings.plotWidth - margin.right + 10,
-        y: margin.top - 20,
-        textAnchor: 'start',
-        fontWeight: 'bold'
-      }, 'OR (95% CI)'),
-      
-      React.createElement('line', {
-        x1: xScale(1),
-        y1: margin.top,
-        x2: xScale(1),
-        y2: settings.plotHeight - margin.bottom,
-        stroke: '#000',
-        strokeWidth: '1.5'
+      React.createElement('rect', { 
+        key: 'background', 
+        width: settings.plotWidth, 
+        height: settings.plotHeight, 
+        fill: 'white' 
       }),
-      
-      settings.showGridlines && [0.5, 2, 5].map(val => {
-        if (val >= minVal && val <= maxVal) {
-          return React.createElement('line', {
-            key: val,
-            x1: xScale(val),
-            y1: margin.top,
-            x2: xScale(val),
-            y2: settings.plotHeight - margin.bottom,
-            stroke: '#ddd',
-            strokeWidth: '1'
-          });
-        }
-        return null;
-      }),
-      
-      data.map((row, idx) => {
-        const y = margin.top + (idx + 0.5) * rowHeight;
-        const isValid = isValidData(row);
-
-        // For invalid data, only show the variable name and "Invalid" status
-        if (!isValid) {
-          return React.createElement('g', { key: row.id },
-            React.createElement('text', {
-              x: margin.left - 10,
-              y: y + 5,
-              textAnchor: 'end'
-            }, row.variable),
-
-            React.createElement('text', {
-              x: settings.plotWidth - margin.right + 10,
-              y: y + 5,
-              textAnchor: 'start',
-              fill: '#FF0000',
-              fontStyle: 'italic'
-            }, 'Invalid OR/CI')
-          );
-        }
-
-        // For valid data, render normally
-        const x1 = xScale(row.lowerCI);
-        const x2 = xScale(row.upperCI);
-        const xCenter = xScale(row.or);
-        const color = getBarColor(row);
-
-        return React.createElement('g', { key: row.id },
-          React.createElement('text', {
-            x: margin.left - 10,
-            y: y + 5,
-            textAnchor: 'end'
-          }, row.variable),
-
-          React.createElement('line', {
-            x1: x1,
-            y1: y,
-            x2: x2,
-            y2: y,
-            stroke: color,
-            strokeWidth: '2'
-          }),
-
-          React.createElement('line', {
-            x1: x1,
-            y1: y - 5,
-            x2: x1,
-            y2: y + 5,
-            stroke: color,
-            strokeWidth: '2'
-          }),
-
-          React.createElement('line', {
-            x1: x2,
-            y1: y - 5,
-            x2: x2,
-            y2: y + 5,
-            stroke: color,
-            strokeWidth: '2'
-          }),
-
-          React.createElement('rect', {
-            x: xCenter - 4,
-            y: y - 4,
-            width: 8,
-            height: 8,
-            fill: color
-          }),
-
-          React.createElement('text', {
-            x: settings.plotWidth - margin.right + 10,
-            y: y + 5,
-            textAnchor: 'start'
-          }, `${row.or.toFixed(2)} (${row.lowerCI.toFixed(2)}-${row.upperCI.toFixed(2)})`)
-        );
-      }),
-      
-      settings.metaAnalysis && (() => {
-        const validDataForMeta = data.filter(d => isValidData(d));
-        if (validDataForMeta.length === 0) return null;
-
-        const pooledOR = validDataForMeta.reduce((sum, d) => sum + d.or, 0) / validDataForMeta.length;
-        const pooledLower = validDataForMeta.reduce((sum, d) => sum + d.lowerCI, 0) / validDataForMeta.length;
-        const pooledUpper = validDataForMeta.reduce((sum, d) => sum + d.upperCI, 0) / validDataForMeta.length;
-        const y = margin.top + (data.length + 0.5) * rowHeight;
-        const xCenter = xScale(pooledOR);
-        
-        return React.createElement('g', null,
-          React.createElement('text', {
-            x: margin.left - 10,
-            y: y + 5,
-            textAnchor: 'end',
-            fontWeight: 'bold'
-          }, 'Pooled Effect'),
-          
-          React.createElement('path', {
-            d: `M ${xCenter} ${y - 8} L ${xCenter + 8} ${y} L ${xCenter} ${y + 8} L ${xCenter - 8} ${y} Z`,
-            fill: '#000'
-          }),
-          
-          React.createElement('text', {
-            x: settings.plotWidth - margin.right + 10,
-            y: y + 5,
-            textAnchor: 'start',
-            fontWeight: 'bold'
-          }, `${pooledOR.toFixed(2)} (${pooledLower.toFixed(2)}-${pooledUpper.toFixed(2)})`)
-        );
-      })(),
-      
-      settings.scale === 'linear' && React.createElement('g', null,
-        [minVal, 1, maxVal].map((val, idx) =>
-          React.createElement('text', {
-            key: idx,
-            x: xScale(val),
-            y: settings.plotHeight - margin.bottom + 20,
-            textAnchor: 'middle',
-            fontSize: settings.fontSize - 2
-          }, val.toFixed(1))
-        )
-      ),
-      
-      settings.scale === 'log' && React.createElement('g', null,
-        [0.1, 0.5, 1, 2, 5, 10].filter(v => v >= minVal && v <= maxVal).map(val =>
-          React.createElement('text', {
-            key: val,
-            x: xScale(val),
-            y: settings.plotHeight - margin.bottom + 20,
-            textAnchor: 'middle',
-            fontSize: settings.fontSize - 2
-          }, val)
-        )
-      ),
-      
-      React.createElement('text', {
-        x: settings.plotWidth / 2,
-        y: settings.plotHeight - 20,
-        textAnchor: 'middle',
-        fontSize: settings.fontSize - 2,
-        fontStyle: 'italic'
-      }, settings.footnote)
+      ...elements
     );
   };
 
@@ -736,7 +988,7 @@ function ForestPlotGenerator() {
                   React.createElement('th', { className: 'border p-2' }, 'Upper CI'),
                   React.createElement('th', { className: 'border p-2' }, 'P-Value'),
                   React.createElement('th', { className: 'border p-2' }, 'Sample Size'),
-                  React.createElement('th', { className: 'border p-2' }, 'Group'),
+                  React.createElement('th', { className: 'border p-2' }, 'Group/Section'),
                   React.createElement('th', { className: 'border p-2' }, 'Color'),
                   React.createElement('th', { className: 'border p-2' }, '')
                 )
@@ -801,7 +1053,8 @@ function ForestPlotGenerator() {
                         type: 'text',
                         value: row.group,
                         onChange: (e) => updateRow(row.id, 'group', e.target.value),
-                        className: 'w-full px-2 py-1 border rounded'
+                        className: 'w-full px-2 py-1 border rounded',
+                        placeholder: 'Section name'
                       })
                     ),
                     React.createElement('td', { className: 'border p-2' },
@@ -810,12 +1063,12 @@ function ForestPlotGenerator() {
                         onChange: (e) => updateRow(row.id, 'color', e.target.value),
                         className: 'w-full px-2 py-1 border rounded'
                       },
-                        React.createElement('option', { value: 'auto' }, 'Auto'),
-                        React.createElement('option', { value: '#000000' }, 'Black'),
-                        React.createElement('option', { value: '#808080' }, 'Gray'),
-                        React.createElement('option', { value: '#FF0000' }, 'Red'),
-                        React.createElement('option', { value: '#0000FF' }, 'Blue'),
-                        React.createElement('option', { value: '#00AA00' }, 'Green')
+                        COLOR_PALETTE.map(color => 
+                          React.createElement('option', { 
+                            key: color.value, 
+                            value: color.value 
+                          }, color.name)
+                        )
                       )
                     ),
                     React.createElement('td', { className: 'border p-2' },
@@ -885,6 +1138,17 @@ function ForestPlotGenerator() {
             )
           ),
           React.createElement('div', null,
+            React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Section Spacing'),
+            React.createElement('input', {
+              type: 'number',
+              value: settings.groupSpacing,
+              onChange: (e) => setSettings({...settings, groupSpacing: parseInt(e.target.value)}),
+              className: 'w-full px-3 py-2 border rounded',
+              min: '0',
+              max: '100'
+            })
+          ),
+          React.createElement('div', null,
             React.createElement('label', { className: 'flex items-center gap-2' },
               React.createElement('input', {
                 type: 'checkbox',
@@ -900,6 +1164,61 @@ function ForestPlotGenerator() {
                 onChange: (e) => setSettings({...settings, metaAnalysis: e.target.checked})
               }),
               React.createElement('span', { className: 'font-semibold' }, 'Meta-analysis Mode')
+            )
+          )
+        ),
+
+        // X-Axis Controls Section
+        React.createElement('div', { className: 'border-t pt-4 mt-4 mb-6' },
+          React.createElement('h3', { className: 'text-lg font-semibold mb-4' }, 'X-Axis Controls'),
+          React.createElement('div', { className: 'grid grid-cols-1 md:grid-cols-2 gap-4' },
+            React.createElement('div', null,
+              React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Axis Mode'),
+              React.createElement('select', {
+                value: settings.xAxisMode,
+                onChange: (e) => setSettings({...settings, xAxisMode: e.target.value}),
+                className: 'w-full px-3 py-2 border rounded'
+              },
+                React.createElement('option', { value: 'auto' }, 'Automatic (Smart)'),
+                React.createElement('option', { value: 'manual' }, 'Manual Control')
+              )
+            ),
+            settings.xAxisMode === 'manual' && React.createElement('div', null,
+              React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Min Value'),
+              React.createElement('input', {
+                type: 'number',
+                step: '0.1',
+                value: settings.xAxisMin,
+                onChange: (e) => setSettings({...settings, xAxisMin: e.target.value}),
+                className: 'w-full px-3 py-2 border rounded',
+                placeholder: 'e.g., 0.1'
+              })
+            ),
+            settings.xAxisMode === 'manual' && React.createElement('div', null,
+              React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Max Value'),
+              React.createElement('input', {
+                type: 'number',
+                step: '0.1',
+                value: settings.xAxisMax,
+                onChange: (e) => setSettings({...settings, xAxisMax: e.target.value}),
+                className: 'w-full px-3 py-2 border rounded',
+                placeholder: 'e.g., 10'
+              })
+            ),
+            settings.xAxisMode === 'manual' && React.createElement('div', { className: 'md:col-span-2' },
+              React.createElement('label', { className: 'block mb-2 font-semibold' }, 
+                'Tick Values (comma-separated, optional)'
+              ),
+              React.createElement('input', {
+                type: 'text',
+                value: settings.xAxisTicks,
+                onChange: (e) => setSettings({...settings, xAxisTicks: e.target.value}),
+                className: 'w-full px-3 py-2 border rounded',
+                placeholder: 'e.g., 0.5, 1, 2, 5, 10'
+              }),
+              React.createElement('p', { className: 'text-sm text-gray-600 mt-1' },
+                'Leave empty for automatic tick generation based on min/max'
+              )
             )
           )
         ),
