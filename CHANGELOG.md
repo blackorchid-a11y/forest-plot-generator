@@ -5,6 +5,22 @@ All notable changes to the Forest Plot Generator will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.2] - 2025-01-XX
+
+### Added
+- **Exact Number Formatting**: OR and CI values now display exactly as entered
+  - No unnecessary trailing zeros added
+  - 0.4 displays as "0.4" instead of "0.40"
+  - 1.5 displays as "1.5" instead of "1.50"
+  - 2 displays as "2" instead of "2.00"
+  - Preserves exact user input precision
+
+### Improved
+- Consistent number formatting across all displays (OR, CI, and p-values)
+- Cleaner, more professional appearance
+- Numbers display exactly as entered in data table
+- Applies to regular variables and pooled effect in meta-analysis mode
+
 ## [2.2.1] - 2025-01-XX
 
 ### Added

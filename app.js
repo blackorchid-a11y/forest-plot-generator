@@ -676,6 +676,16 @@ function ForestPlotGenerator() {
     return str.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
   };
 
+  // Format OR/CI values to match user input exactly (no unnecessary trailing zeros)
+  const formatNumber = (num) => {
+    // Convert to string and remove trailing zeros after decimal point
+    const str = num.toString();
+    // If it's already in the format we want, return it
+    if (!str.includes('.')) return str;
+    // Remove trailing zeros
+    return str.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+  };
+
   const renderForestPlot = () => {
     // Adjust right margin based on whether p-values are shown
     const baseRightMargin = 150;
@@ -929,8 +939,8 @@ function ForestPlotGenerator() {
                 y: y + 5,
                 textAnchor: 'start'
               }, settings.showPValues ? 
-                `${row.or.toFixed(2)} (${row.lowerCI.toFixed(2)}-${row.upperCI.toFixed(2)}) p=${formatPValue(row.pValue)}` : 
-                `${row.or.toFixed(2)} (${row.lowerCI.toFixed(2)}-${row.upperCI.toFixed(2)})`
+                `${formatNumber(row.or)} (${formatNumber(row.lowerCI)}-${formatNumber(row.upperCI)}) p=${formatPValue(row.pValue)}` : 
+                `${formatNumber(row.or)} (${formatNumber(row.lowerCI)}-${formatNumber(row.upperCI)})`
               )
             )
           );
@@ -970,8 +980,8 @@ function ForestPlotGenerator() {
               textAnchor: 'start',
               fontWeight: 'bold'
             }, settings.showPValues ? 
-              `${pooledOR.toFixed(2)} (${pooledLower.toFixed(2)}-${pooledUpper.toFixed(2)}) p=pooled` :
-              `${pooledOR.toFixed(2)} (${pooledLower.toFixed(2)}-${pooledUpper.toFixed(2)})`
+              `${formatNumber(pooledOR)} (${formatNumber(pooledLower)}-${formatNumber(pooledUpper)}) p=pooled` :
+              `${formatNumber(pooledOR)} (${formatNumber(pooledLower)}-${formatNumber(pooledUpper)})`
             )
           )
         );
