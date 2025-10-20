@@ -132,7 +132,8 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
         pValue: parseFloat(row[columnMapping.pValue]) || 0.05,
         sampleSize: row[columnMapping.sampleSize] || '',
         group: row[columnMapping.group] || '',
-        color: 'auto'
+        color: 'auto',
+        position: idx + 1
       }));
 
       onImport(parsed, selectedSheet);
@@ -310,7 +311,7 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
 function ForestPlotGenerator() {
   const [inputMode, setInputMode] = useState('manual');
   const [data, setData] = useState([
-    { id: 1, variable: 'Variable 1', or: 1.5, lowerCI: 1.2, upperCI: 1.9, pValue: 0.001, sampleSize: '', group: '', color: 'auto' }
+    { id: 1, variable: 'Variable 1', or: 1.5, lowerCI: 1.2, upperCI: 1.9, pValue: 0.001, sampleSize: '', group: '', color: 'auto', position: 1 }
   ]);
   const [excelData, setExcelData] = useState(null);
   const [showExcelImport, setShowExcelImport] = useState(false);
@@ -320,13 +321,18 @@ function ForestPlotGenerator() {
     scale: 'linear',
     font: 'Arial',
     fontSize: 14,
+    groupTitleFontSize: 16, // Independent font size for section/group titles
     showGridlines: false,
     metaAnalysis: false,
+    showPValues: false, // Show p-values next to OR (95% CI)
+    alignVariablesLeft: false, // Align variable names to the left instead of right
     title: 'Forest Plot',
     footnote: 'Error bars represent 95% confidence intervals',
     plotWidth: 800,
     plotHeight: 600,
     groupSpacing: 30,
+    spacingBeforeGroupTitle: 20, // Space above group title
+    spacingAfterGroupTitle: 5,   // Space below group title (before variables)
     // X-axis settings
     xAxisMode: 'auto', // 'auto' or 'manual'
     xAxisMin: '',
@@ -339,6 +345,7 @@ function ForestPlotGenerator() {
 
   const addRow = () => {
     const newId = Math.max(...data.map(d => d.id), 0) + 1;
+    const maxPosition = Math.max(...data.map(d => d.position || 0), 0);
     setData([...data, { 
       id: newId, 
       variable: `Variable ${newId}`, 
@@ -348,7 +355,8 @@ function ForestPlotGenerator() {
       pValue: 0.5, 
       sampleSize: '', 
       group: '',
-      color: 'auto'
+      color: 'auto',
+      position: maxPosition + 1
     }]);
   };
 
@@ -396,7 +404,8 @@ function ForestPlotGenerator() {
                 pValue: parseFloat(row[headers[4]]) || 0.05,
                 sampleSize: row[headers[5]] || '',
                 group: row[headers[6]] || '',
-                color: 'auto'
+                color: 'auto',
+                position: idx + 1
               }));
               setData(parsed);
               setInputMode('manual');
@@ -475,6 +484,15 @@ function ForestPlotGenerator() {
         groups[groupName] = [];
       }
       groups[groupName].push(row);
+    });
+    
+    // Sort rows within each group by position
+    Object.keys(groups).forEach(groupName => {
+      groups[groupName].sort((a, b) => {
+        const posA = a.position !== undefined ? a.position : a.id;
+        const posB = b.position !== undefined ? b.position : b.id;
+        return posA - posB;
+      });
     });
     
     return groups;
@@ -604,17 +622,70 @@ function ForestPlotGenerator() {
     reader.onload = (event) => {
       try {
         const project = JSON.parse(event.target.result);
-        if (project.data) setData(project.data);
-        if (project.settings) setSettings(project.settings);
+        if (project.data) {
+          // Add position field if missing (backward compatibility)
+          const dataWithPositions = project.data.map((row, idx) => ({
+            ...row,
+            position: row.position !== undefined ? row.position : idx + 1
+          }));
+          setData(dataWithPositions);
+        }
+        if (project.settings) {
+          // Backward compatibility: add new spacing fields if missing
+          const loadedSettings = { ...project.settings };
+          
+          // If the new spacing fields don't exist, use defaults
+          if (loadedSettings.spacingBeforeGroupTitle === undefined) {
+            loadedSettings.spacingBeforeGroupTitle = 20;
+          }
+          if (loadedSettings.spacingAfterGroupTitle === undefined) {
+            loadedSettings.spacingAfterGroupTitle = 5;
+          }
+          if (loadedSettings.groupTitleFontSize === undefined) {
+            loadedSettings.groupTitleFontSize = 16;
+          }
+          
+          // Convert old groupSpacing to new fields if it exists and new fields are defaults
+          if (loadedSettings.groupSpacing !== undefined && 
+              loadedSettings.spacingBeforeGroupTitle === 20 && 
+              loadedSettings.spacingAfterGroupTitle === 5) {
+            // Migrate old groupSpacing: split it between before and after
+            const totalSpacing = loadedSettings.groupSpacing;
+            loadedSettings.spacingBeforeGroupTitle = Math.floor(totalSpacing * 0.7);
+            loadedSettings.spacingAfterGroupTitle = Math.ceil(totalSpacing * 0.3);
+          }
+          
+          setSettings(loadedSettings);
+        }
       } catch (error) {
-        alert('Error loading project file');
+        console.error('Load error:', error);
+        alert('Error loading project file: ' + error.message);
       }
     };
     reader.readAsText(file);
   };
 
+  // Format p-value to match user input exactly (no unnecessary trailing zeros)
+  const formatPValue = (pValue) => {
+    if (pValue < 0.001) return '<0.001';
+    // Convert to string and remove trailing zeros after decimal point
+    const str = pValue.toString();
+    // If it's already in the format we want, return it
+    if (!str.includes('.')) return str;
+    // Remove trailing zeros
+    return str.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+  };
+
   const renderForestPlot = () => {
-    const margin = { top: 80, right: 150, bottom: 80, left: 200 };
+    // Adjust right margin based on whether p-values are shown
+    const baseRightMargin = 150;
+    const rightMarginWithPValues = 220; // Extra space for p-values
+    const margin = { 
+      top: 80, 
+      right: settings.showPValues ? rightMarginWithPValues : baseRightMargin, 
+      bottom: 80, 
+      left: 200 
+    };
     const plotWidth = settings.plotWidth - margin.left - margin.right;
     const plotHeight = settings.plotHeight - margin.top - margin.bottom;
     
@@ -676,7 +747,15 @@ function ForestPlotGenerator() {
     let totalRows = data.length + groupNames.length;
     if (settings.metaAnalysis) totalRows += 1;
     
-    const baseRowHeight = (plotHeight - (groupNames.length * settings.groupSpacing)) / totalRows;
+    // Calculate total spacing needed for groups
+    const totalGroupSpacing = groupNames.reduce((sum, groupName) => {
+      if (groupName && groupName !== 'Ungrouped' && groupName.trim() !== '') {
+        return sum + settings.spacingBeforeGroupTitle + settings.spacingAfterGroupTitle;
+      }
+      return sum;
+    }, 0);
+    
+    const baseRowHeight = (plotHeight - totalGroupSpacing) / totalRows;
     let currentY = margin.top;
     
     const elements = [];
@@ -696,9 +775,9 @@ function ForestPlotGenerator() {
     elements.push(
       React.createElement('text', {
         key: 'header-var',
-        x: margin.left - 10,
+        x: settings.alignVariablesLeft ? 10 : margin.left - 10,
         y: margin.top - 20,
-        textAnchor: 'end',
+        textAnchor: settings.alignVariablesLeft ? 'start' : 'end',
         fontWeight: 'bold'
       }, 'Variable')
     );
@@ -754,19 +833,23 @@ function ForestPlotGenerator() {
       
       // Section header
       if (groupName && groupName !== 'Ungrouped' && groupName.trim() !== '') {
+        // Add space before the group title
+        currentY += settings.spacingBeforeGroupTitle;
+        
         elements.push(
           React.createElement('text', {
             key: `section-${groupIdx}`,
-            x: margin.left - 10,
+            x: settings.alignVariablesLeft ? 10 : margin.left - 10,
             y: currentY + 5,
-            textAnchor: 'end',
+            textAnchor: settings.alignVariablesLeft ? 'start' : 'end',
             fontWeight: 'bold',
-            fontSize: settings.fontSize + 2,
+            fontSize: settings.groupTitleFontSize,
             fill: '#000000'
           }, groupName)
         );
         
-        currentY += baseRowHeight + settings.groupSpacing;
+        // Add space after the group title (before its variables)
+        currentY += baseRowHeight + settings.spacingAfterGroupTitle;
       }
       
       // Render rows in this group
@@ -778,9 +861,9 @@ function ForestPlotGenerator() {
           elements.push(
             React.createElement('g', { key: `row-${row.id}` },
               React.createElement('text', {
-                x: margin.left - 10,
+                x: settings.alignVariablesLeft ? 10 : margin.left - 10,
                 y: y + 5,
-                textAnchor: 'end'
+                textAnchor: settings.alignVariablesLeft ? 'start' : 'end'
               }, row.variable),
 
               React.createElement('text', {
@@ -801,9 +884,9 @@ function ForestPlotGenerator() {
           elements.push(
             React.createElement('g', { key: `row-${row.id}` },
               React.createElement('text', {
-                x: margin.left - 10,
+                x: settings.alignVariablesLeft ? 10 : margin.left - 10,
                 y: y + 5,
-                textAnchor: 'end'
+                textAnchor: settings.alignVariablesLeft ? 'start' : 'end'
               }, row.variable),
 
               React.createElement('line', {
@@ -845,7 +928,10 @@ function ForestPlotGenerator() {
                 x: settings.plotWidth - margin.right + 10,
                 y: y + 5,
                 textAnchor: 'start'
-              }, `${row.or.toFixed(2)} (${row.lowerCI.toFixed(2)}-${row.upperCI.toFixed(2)})`)
+              }, settings.showPValues ? 
+                `${row.or.toFixed(2)} (${row.lowerCI.toFixed(2)}-${row.upperCI.toFixed(2)}) p=${formatPValue(row.pValue)}` : 
+                `${row.or.toFixed(2)} (${row.lowerCI.toFixed(2)}-${row.upperCI.toFixed(2)})`
+              )
             )
           );
         }
@@ -867,9 +953,9 @@ function ForestPlotGenerator() {
         elements.push(
           React.createElement('g', { key: 'pooled-effect' },
             React.createElement('text', {
-              x: margin.left - 10,
+              x: settings.alignVariablesLeft ? 10 : margin.left - 10,
               y: y + 5,
-              textAnchor: 'end',
+              textAnchor: settings.alignVariablesLeft ? 'start' : 'end',
               fontWeight: 'bold'
             }, 'Pooled Effect'),
             
@@ -883,7 +969,10 @@ function ForestPlotGenerator() {
               y: y + 5,
               textAnchor: 'start',
               fontWeight: 'bold'
-            }, `${pooledOR.toFixed(2)} (${pooledLower.toFixed(2)}-${pooledUpper.toFixed(2)})`)
+            }, settings.showPValues ? 
+              `${pooledOR.toFixed(2)} (${pooledLower.toFixed(2)}-${pooledUpper.toFixed(2)}) p=pooled` :
+              `${pooledOR.toFixed(2)} (${pooledLower.toFixed(2)}-${pooledUpper.toFixed(2)})`
+            )
           )
         );
       }
@@ -982,6 +1071,7 @@ function ForestPlotGenerator() {
             React.createElement('table', { className: 'w-full border-collapse' },
               React.createElement('thead', null,
                 React.createElement('tr', { className: 'bg-gray-100' },
+                  React.createElement('th', { className: 'border p-2' }, 'Position'),
                   React.createElement('th', { className: 'border p-2' }, 'Variable'),
                   React.createElement('th', { className: 'border p-2' }, 'OR'),
                   React.createElement('th', { className: 'border p-2' }, 'Lower CI'),
@@ -996,6 +1086,15 @@ function ForestPlotGenerator() {
               React.createElement('tbody', null,
                 data.map(row =>
                   React.createElement('tr', { key: row.id },
+                    React.createElement('td', { className: 'border p-2' },
+                      React.createElement('input', {
+                        type: 'number',
+                        value: row.position !== undefined ? row.position : row.id,
+                        onChange: (e) => updateRow(row.id, 'position', parseInt(e.target.value)),
+                        className: 'w-20 px-2 py-1 border rounded text-center',
+                        min: '1'
+                      })
+                    ),
                     React.createElement('td', { className: 'border p-2' },
                       React.createElement('input', {
                         type: 'text',
@@ -1127,6 +1226,18 @@ function ForestPlotGenerator() {
             })
           ),
           React.createElement('div', null,
+            React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Section Title Font Size'),
+            React.createElement('input', {
+              type: 'number',
+              value: settings.groupTitleFontSize,
+              onChange: (e) => setSettings({...settings, groupTitleFontSize: parseInt(e.target.value)}),
+              className: 'w-full px-3 py-2 border rounded',
+              min: '8',
+              max: '48'
+            }),
+            React.createElement('p', { className: 'text-xs text-gray-600 mt-1' }, 'Font size for group/section titles')
+          ),
+          React.createElement('div', null,
             React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Scale'),
             React.createElement('select', {
               value: settings.scale,
@@ -1138,15 +1249,40 @@ function ForestPlotGenerator() {
             )
           ),
           React.createElement('div', null,
-            React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Section Spacing'),
+            React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Old Section Spacing (deprecated)'),
             React.createElement('input', {
               type: 'number',
               value: settings.groupSpacing,
               onChange: (e) => setSettings({...settings, groupSpacing: parseInt(e.target.value)}),
+              className: 'w-full px-3 py-2 border rounded bg-gray-100',
+              min: '0',
+              max: '100',
+              disabled: true
+            })
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Space Before Section Title'),
+            React.createElement('input', {
+              type: 'number',
+              value: settings.spacingBeforeGroupTitle,
+              onChange: (e) => setSettings({...settings, spacingBeforeGroupTitle: parseInt(e.target.value)}),
               className: 'w-full px-3 py-2 border rounded',
               min: '0',
               max: '100'
-            })
+            }),
+            React.createElement('p', { className: 'text-xs text-gray-600 mt-1' }, 'Space above the section title')
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Space After Section Title'),
+            React.createElement('input', {
+              type: 'number',
+              value: settings.spacingAfterGroupTitle,
+              onChange: (e) => setSettings({...settings, spacingAfterGroupTitle: parseInt(e.target.value)}),
+              className: 'w-full px-3 py-2 border rounded',
+              min: '-20',
+              max: '100'
+            }),
+            React.createElement('p', { className: 'text-xs text-gray-600 mt-1' }, 'Space below the section title (before variables). Can be negative for very tight spacing.')
           ),
           React.createElement('div', null,
             React.createElement('label', { className: 'flex items-center gap-2' },
@@ -1164,6 +1300,22 @@ function ForestPlotGenerator() {
                 onChange: (e) => setSettings({...settings, metaAnalysis: e.target.checked})
               }),
               React.createElement('span', { className: 'font-semibold' }, 'Meta-analysis Mode')
+            ),
+            React.createElement('label', { className: 'flex items-center gap-2 mt-2' },
+              React.createElement('input', {
+                type: 'checkbox',
+                checked: settings.showPValues,
+                onChange: (e) => setSettings({...settings, showPValues: e.target.checked})
+              }),
+              React.createElement('span', { className: 'font-semibold' }, 'Show P-Values')
+            ),
+            React.createElement('label', { className: 'flex items-center gap-2 mt-2' },
+              React.createElement('input', {
+                type: 'checkbox',
+                checked: settings.alignVariablesLeft,
+                onChange: (e) => setSettings({...settings, alignVariablesLeft: e.target.checked})
+              }),
+              React.createElement('span', { className: 'font-semibold' }, 'Align Variables Left')
             )
           )
         ),

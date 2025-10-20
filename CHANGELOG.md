@@ -5,6 +5,63 @@ All notable changes to the Forest Plot Generator will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2025-01-XX
+
+### Added
+- **Independent Section Title Font Size**: Separate font size control for section/group titles
+  - New "Section Title Font Size" setting (default: 16px)
+  - Range: 8-48 pixels
+  - Section titles can now be larger or smaller than variable names
+  - Regular variables use the standard "Font Size" setting
+  
+- **Enhanced Spacing Control**: Negative values now allowed for "Space After Section Title"
+  - New range: -20 to 100 pixels (previously 0 to 100)
+  - Negative values create ultra-tight layouts with section titles very close to variables
+  - Useful for compact forest plots with minimal spacing
+
+### Improved
+- Better control over section title prominence through independent sizing
+- More flexible layout options with negative spacing values
+- Backward compatibility with v2.2.0 projects (auto-assigns default section title font size)
+
+## [2.2.0] - 2025-01-XX
+
+### Added
+- **Manual Position Control**: Set custom display order for variables within groups
+  - New "Position" column in data entry table
+  - Variables sorted by position number within each section
+  - Independent positioning for each group/section
+  - Automatic position assignment for new rows
+  
+- **Enhanced Spacing Controls**: Separate controls for section title spacing
+  - "Space Before Section Title": Adjust gap above section headers (default: 20px)
+  - "Space After Section Title": Adjust gap below section headers (default: 5px)
+  - Replace old single spacing control with more flexible dual controls
+  - Better visual separation between sections
+  
+- **P-Value Display**: Optional p-value display next to OR (95% CI)
+  - New "Show P-Values" checkbox in settings
+  - Displays exact p-value as entered (no unnecessary trailing zeros)
+  - Format: "1.50 (1.20-1.90) p=0.341"
+  - Shows "p=<0.001" for very small p-values
+  - Automatic margin adjustment to accommodate p-value text
+  
+- **Variable Alignment Option**: Choose left or right alignment for variable names
+  - New "Align Variables Left" checkbox in settings
+  - Default: Right-aligned (text ends at plot edge)
+  - Optional: Left-aligned (text starts at left margin)
+  - Applies to all left-side text including section titles
+
+### Improved
+- Automatic right margin expansion when p-values are enabled (150px → 220px)
+- Backward compatibility with old project files (auto-migration of settings)
+- Better handling of missing position and spacing fields in legacy files
+- Enhanced data import with automatic position assignment
+
+### Fixed
+- Section spacing now properly calculated using separate before/after values
+- P-value formatting preserves user input precision
+
 ## [2.1.0] - 2025-01-XX
 
 ### Added
