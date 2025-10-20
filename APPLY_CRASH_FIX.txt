@@ -1,0 +1,107 @@
+===========================================================================
+CRITICAL CRASH FIX INSTRUCTIONS FOR v2.2.3
+===========================================================================
+
+PROBLEM: App crashes when entering invalid X-axis ranges (e.g., Min=0.02)
+CAUSE: No validation before rendering + infinite loops in tick generation
+RESULT: RangeError: Invalid array length + lost progress
+
+===========================================================================
+HOW TO APPLY THE FIX:
+===========================================================================
+
+Open: C:\Users\jorge\Desktop\forest-plot-app\app.js
+
+Find the line (around line 689):
+  const renderForestPlot = () => {
+
+Add this code IMMEDIATELY after that line (before any other code):
+
+```javascript
+const renderForestPlot = () => {
+  // CRASH FIX: Validate manual X-axis settings before rendering
+  if (settings.xAxisMode === 'manual') {
+    const minVal = parseFloat(settings.xAxisMin);
+    const maxVal = parseFloat(settings.xAxisMax);
+    
+    // Check if values are valid numbers
+    if (settings.xAxisMin !== '' && isNaN(minVal)) {
+      return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+        React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid X-Axis'),
+        React.createElement('p', null, 'Min value must be a valid number')
+      );
+    }
+    
+    if (settings.xAxisMax !== '' && isNaN(maxVal)) {
+      return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+        React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid X-Axis'),
+        React.createElement('p', null, 'Max value must be a valid number')
+      );
+    }
+    
+    // Check if both values are provided
+    if (settings.xAxisMin !== '' && settings.xAxisMax !== '') {
+      // Check if min < max
+      if (minVal >= maxVal) {
+        return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+          React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid Range'),
+          React.createElement('p', null, `Min (${minVal}) must be less than Max (${maxVal})`)
+        );
+      }
+      
+      // Check if values are positive
+      if (minVal <= 0 || maxVal <= 0) {
+        return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+          React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid Range'),
+          React.createElement('p', null, 'Values must be positive (> 0)'),
+          React.createElement('p', { className: 'mt-2 text-sm' }, `Current: ${minVal} to ${maxVal}`)
+        );
+      }
+      
+      // Check for very small ranges
+      const range = maxVal - minVal;
+      if (range < 0.01) {
+        return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+          React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Range Too Small'),
+          React.createElement('p', null, `Range (${range.toFixed(4)}) is too small`),
+          React.createElement('p', { className: 'mt-2 text-sm' }, 'Use a larger difference between min and max')
+        );
+      }
+    }
+  }
+  
+  // Continue with existing code...
+  const margin = { ...
+```
+
+===========================================================================
+WHAT THIS FIX DOES:
+===========================================================================
+
+1. Validates X-axis settings BEFORE trying to render
+2. Shows clear error messages instead of crashing
+3. Preserves your data (no crash = no data loss)
+4. Explains exactly what's wrong and how to fix it
+
+===========================================================================
+AFTER APPLYING THE FIX:
+===========================================================================
+
+Test these scenarios (should show errors, NOT crash):
+- Min: 0.02, Max: (empty) → "Max value must be a number"
+- Min: 10, Max: 5 → "Min must be less than Max"
+- Min: 0, Max: 10 → "Values must be positive"
+- Min: 1, Max: 1.001 → "Range too small"
+
+All of these will now show friendly error messages instead of crashing!
+
+===========================================================================
+THEN RUN:
+===========================================================================
+
+1. Save app.js with the changes
+2. Run: npm run build
+3. Test with your previous settings (Min=0.02)
+4. You should see an error message instead of a crash
+
+===========================================================================

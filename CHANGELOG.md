@@ -5,6 +5,40 @@ All notable changes to the Forest Plot Generator will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.3] - 2025-01-XX
+
+### Fixed
+- **Critical Crash Fix**: App no longer crashes with invalid X-axis ranges
+  - Fixed crash when entering very small minimum values (e.g., 0.02)
+  - Fixed "RangeError: Invalid array length" error
+  - No more data loss from crashes
+  
+### Added
+- **Comprehensive X-Axis Validation**: Input validation prevents crashes
+  - Validates min < max before rendering
+  - Ensures all values are positive (> 0)
+  - Checks for excessively small ranges
+  - Detects invalid number inputs
+  - Shows clear error messages with current values
+  
+- **Error Display**: Friendly error messages instead of crashes
+  - Specific error messages for each validation failure
+  - Displays current problematic values
+  - Provides suggestions for fixing issues
+  - App continues running (no crash!)
+  
+- **Infinite Loop Prevention**: Added safeguards in tick generation
+  - Maximum iteration limits (20-100 iterations)
+  - Validation for infinite/NaN values
+  - Fallback tick values if generation fails
+  - Prevents division by zero errors
+
+### Improved
+- Better error handling throughout rendering process
+- More robust tick generation algorithm
+- Safer number parsing and validation
+- Data preservation during errors
+
 ## [2.2.2] - 2025-01-XX
 
 ### Added

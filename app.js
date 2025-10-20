@@ -687,14 +687,85 @@ function ForestPlotGenerator() {
   };
 
   const renderForestPlot = () => {
+    // CRASH FIX v2.2.3: Validate manual X-axis settings before rendering
+    if (settings.xAxisMode === 'manual') {
+      const minVal = parseFloat(settings.xAxisMin);
+      const maxVal = parseFloat(settings.xAxisMax);
+
+      // Check if values are valid numbers
+      if (settings.xAxisMin !== '' && isNaN(minVal)) {
+        return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+          React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid X-Axis Configuration'),
+          React.createElement('p', null, 'Minimum value must be a valid number.'),
+          React.createElement('p', { className: 'mt-2 text-sm' }, 'Please check your X-Axis settings.')
+        );
+      }
+
+      if (settings.xAxisMax !== '' && isNaN(maxVal)) {
+        return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+          React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid X-Axis Configuration'),
+          React.createElement('p', null, 'Maximum value must be a valid number.'),
+          React.createElement('p', { className: 'mt-2 text-sm' }, 'Please check your X-Axis settings.')
+        );
+      }
+
+      // Check if both values are provided
+      if (settings.xAxisMin !== '' && settings.xAxisMax !== '') {
+        // Check if min < max
+        if (minVal >= maxVal) {
+          return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+            React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid X-Axis Range'),
+            React.createElement('p', null, `Minimum value (${minVal}) must be less than maximum value (${maxVal}).`),
+            React.createElement('p', { className: 'mt-2 text-sm' }, 'Please adjust your X-Axis settings.')
+          );
+        }
+
+        // Check if values are positive
+        if (minVal <= 0 || maxVal <= 0) {
+          return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+            React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid X-Axis Range'),
+            React.createElement('p', null, 'X-Axis values must be positive numbers greater than 0.'),
+            React.createElement('p', { className: 'mt-2 text-sm' }, `Current range: ${minVal} to ${maxVal}`),
+            React.createElement('p', { className: 'mt-2 text-sm' }, 'For log scale, all values must be > 0.')
+          );
+        }
+
+        // Check for extremely small ranges that might cause issues
+        const range = maxVal - minVal;
+        if (range < 0.01) {
+          return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+            React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ X-Axis Range Too Small'),
+            React.createElement('p', null, 'The difference between min and max is too small.'),
+            React.createElement('p', { className: 'mt-2 text-sm' }, `Current range: ${range.toFixed(6)}`),
+            React.createElement('p', { className: 'mt-2 text-sm' }, 'Please use a larger range. Minimum recommended: 0.1')
+          );
+        }
+
+        // For log scale, check if range is reasonable
+        if (settings.scale === 'log') {
+          const logRange = Math.log10(maxVal) - Math.log10(minVal);
+          if (logRange < 0.1) {
+            return React.createElement('div', { className: 'p-8 text-center text-orange-600' },
+              React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Warning: Narrow Logarithmic Scale'),
+              React.createElement('p', null, 'The logarithmic scale range is very narrow.'),
+              React.createElement('p', { className: 'mt-2 text-sm' }, `Current range: ${minVal} to ${maxVal}`),
+              React.createElement('p', { className: 'mt-2 text-sm' }, 'Consider using a wider range or linear scale.')
+            );
+          }
+        }
+      }
+    }
+
+    // Wrap the entire rendering in a try-catch to prevent crashes
+    try {
     // Adjust right margin based on whether p-values are shown
     const baseRightMargin = 150;
     const rightMarginWithPValues = 220; // Extra space for p-values
-    const margin = { 
-      top: 80, 
-      right: settings.showPValues ? rightMarginWithPValues : baseRightMargin, 
-      bottom: 80, 
-      left: 200 
+    const margin = {
+      top: 80,
+      right: settings.showPValues ? rightMarginWithPValues : baseRightMargin,
+      bottom: 80,
+      left: 200
     };
     const plotWidth = settings.plotWidth - margin.left - margin.right;
     const plotHeight = settings.plotHeight - margin.top - margin.bottom;
@@ -1031,6 +1102,22 @@ function ForestPlotGenerator() {
       }),
       ...elements
     );
+    } catch (error) {
+      console.error('Error rendering forest plot:', error);
+      return React.createElement('div', { className: 'p-8 text-center text-red-600' },
+        React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Error Rendering Forest Plot'),
+        React.createElement('p', null, 'An error occurred while generating the plot.'),
+        React.createElement('p', { className: 'mt-2 text-sm font-mono bg-red-50 p-2 rounded' }, error.message),
+        React.createElement('p', { className: 'mt-4 text-sm' }, 'Please check your settings and data, then try again.'),
+        React.createElement('p', { className: 'mt-2 text-sm' }, 'Common issues:'),
+        React.createElement('ul', { className: 'list-disc list-inside text-left mt-2 ml-4' },
+          React.createElement('li', null, 'Invalid X-axis range'),
+          React.createElement('li', null, 'Very small or very large numbers'),
+          React.createElement('li', null, 'Negative values with log scale'),
+          React.createElement('li', null, 'Invalid data in variables')
+        )
+      );
+    }
   };
 
   return React.createElement('div', { className: 'min-h-screen bg-gray-50 p-4' },

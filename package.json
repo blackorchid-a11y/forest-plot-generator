@@ -1,6 +1,6 @@
 {
      "name": "forest-plot-generator",
-     "version": "2.2.2",
+     "version": "2.2.3",
      "description": "Generate professional forest plots with Excel import, manual ordering, enhanced spacing controls, and p-value display",
      "main": "main.js",
      "scripts": {
