@@ -1,39 +1,42 @@
 {
-     "name": "forest-plot-generator",
-     "version": "2.2.3",
-     "description": "Generate professional forest plots with Excel import, manual ordering, enhanced spacing controls, and p-value display",
-     "main": "main.js",
-     "scripts": {
-       "start": "electron .",
-       "build": "electron-builder --win --x64",
-       "build-mac": "electron-builder --mac"
-     },
-     "build": {
-  "appId": "com.forestplot.generator",
-  "productName": "Forest Plot Generator",
-  "publish": null,
-  "win": {
-    "target": [
-      {
-        "target": "nsis",
-        "arch": ["x64"]
-      }
-    ]
+  "name": "forest-plot-generator",
+  "version": "3.0.0",
+  "description": "Generate professional forest plots with multi-plot support, flexible layouts, enhanced color selection with visual preview, precise spacing controls, Excel import, and p-value display",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64",
+    "build-mac": "electron-builder --mac"
   },
-  "mac": {
-    "target": "dmg",
-    "category": "public.app-category.productivity"
+  "build": {
+    "appId": "com.forestplot.generator",
+    "productName": "Forest Plot Generator",
+    "publish": null,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
-  "nsis": {
-    "oneClick": false,
-    "allowToChangeInstallationDirectory": true
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.0",
+    "electron-icon-builder": "^2.0.1"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
   }
-},
-     "devDependencies": {
-       "electron": "^28.0.0",
-       "electron-builder": "^24.9.0"
-     },
-     "dependencies": {
-       "xlsx": "^0.18.5"
-     }
-   }
+}
