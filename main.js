@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, Menu } = require('electron');
 const path = require('path');
 
 function createWindow() {
@@ -18,21 +18,34 @@ function createWindow() {
   // Open DevTools automatically in development
   win.webContents.openDevTools();
 
-  // Handle zoom shortcuts manually since menu bar is hidden
-  win.webContents.on('before-input-event', (event, input) => {
-    if (input.control) {
-      if (input.key === '+' || input.key === '=') {
-        win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 1);
-        event.preventDefault();
-      } else if (input.key === '-') {
-        win.webContents.setZoomLevel(win.webContents.getZoomLevel() - 1);
-        event.preventDefault();
-      } else if (input.key === '0') {
-        win.webContents.setZoomLevel(0);
-        event.preventDefault();
-      }
+  // Create application menu with standard roles to enable shortcuts
+  const template = [
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { role: 'close' }
+      ]
     }
-  });
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
 }
 
 app.whenReady().then(createWindow);
