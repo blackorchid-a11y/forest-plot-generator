@@ -1222,7 +1222,7 @@ function ForestPlotGenerator() {
           key: plot.id,
           transform: `translate(${xOffset}, ${yOffset})`
         },
-          renderSinglePlot(plot.data, plot.settings, true)
+          renderSinglePlot(plot.data, { ...plot.settings, title: plot.title }, true)
         );
       })
     );

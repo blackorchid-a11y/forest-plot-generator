@@ -1,6 +1,6 @@
 {
   "name": "forest-plot-generator",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Generate professional forest plots with multi-plot support, flexible layouts, enhanced color selection with visual preview, precise spacing controls, Excel import, and p-value display",
   "main": "main.js",
   "scripts": {
