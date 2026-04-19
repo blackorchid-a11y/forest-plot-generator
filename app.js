@@ -340,7 +340,7 @@ function ForestPlotGenerator() {
         markerStyle: 'square',
         markerSize: 8,
         lineThickness: 2,
-        pooledColor: '#000',
+        pooledColor: '#000000',
         pooledStyle: 'diamond'
       }
     }
