@@ -328,7 +328,7 @@ function ForestPlotGenerator() {
         metaAnalysis: false,
         showPValues: false,
         alignVariablesLeft: false,
-        title: 'Forest Plot', // Subtitle for this plot
+        title: 'Forest Plot', // Displayed subtitle shown on the plot itself
         footnote: 'Error bars represent 95% confidence intervals',
         groupSpacing: 30,
         spacingBeforeGroupTitle: 20,
@@ -336,7 +336,12 @@ function ForestPlotGenerator() {
         xAxisMode: 'auto',
         xAxisMin: '',
         xAxisMax: '',
-        xAxisTicks: ''
+        xAxisTicks: '',
+        markerStyle: 'square',
+        markerSize: 8,
+        lineThickness: 2,
+        pooledColor: '#000',
+        pooledStyle: 'diamond'
       }
     }
   ]);
@@ -370,7 +375,7 @@ function ForestPlotGenerator() {
       data: [
         { id: 1, variable: 'Variable 1', or: 1.0, lowerCI: 0.8, upperCI: 1.2, pValue: 0.5, sampleSize: '', group: '', color: 'auto', position: 1 }
       ],
-      settings: { ...plots[0].settings, title: `Plot ${newId}` }
+      settings: { ...plots[0].settings, title: '' }
     };
     setPlots([...plots, newPlot]);
     setActivePlotId(newId);
@@ -632,8 +637,10 @@ function ForestPlotGenerator() {
 
     const dpi = 800;
     const scaleFactor = dpi / 96;
-    canvas.width = settings.plotWidth * scaleFactor;
-    canvas.height = settings.plotHeight * scaleFactor;
+    const svgWidth = svgElement.width.baseVal.value;
+    const svgHeight = svgElement.height.baseVal.value;
+    canvas.width = svgWidth * scaleFactor;
+    canvas.height = svgHeight * scaleFactor;
     ctx.scale(scaleFactor, scaleFactor);
 
     img.onload = () => {
@@ -741,6 +748,28 @@ function ForestPlotGenerator() {
     if (!str.includes('.')) return str;
     // Remove trailing zeros
     return str.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+  };
+
+  const renderMarker = (xCenter, y, color, style, size) => {
+    const s = size || 8;
+    const half = s / 2;
+    switch (style) {
+      case 'circle':
+        return React.createElement('circle', { cx: xCenter, cy: y, r: half, fill: color });
+      case 'diamond':
+        return React.createElement('path', {
+          d: `M ${xCenter} ${y - half} L ${xCenter + half} ${y} L ${xCenter} ${y + half} L ${xCenter - half} ${y} Z`,
+          fill: color
+        });
+      case 'triangle':
+        return React.createElement('polygon', {
+          points: `${xCenter},${y - half} ${xCenter + half},${y + half} ${xCenter - half},${y + half}`,
+          fill: color
+        });
+      case 'square':
+      default:
+        return React.createElement('rect', { x: xCenter - half, y: y - half, width: s, height: s, fill: color });
+    }
   };
 
   const renderSinglePlot = (plotData, plotSettings, isSubPlot = false) => {
@@ -1043,7 +1072,7 @@ function ForestPlotGenerator() {
                   x2: x2,
                   y2: y,
                   stroke: color,
-                  strokeWidth: '2'
+                  strokeWidth: plotSettings.lineThickness || 2
                 }),
 
                 React.createElement('line', {
@@ -1052,7 +1081,7 @@ function ForestPlotGenerator() {
                   x2: x1,
                   y2: y + 5,
                   stroke: color,
-                  strokeWidth: '2'
+                  strokeWidth: plotSettings.lineThickness || 2
                 }),
 
                 React.createElement('line', {
@@ -1061,16 +1090,10 @@ function ForestPlotGenerator() {
                   x2: x2,
                   y2: y + 5,
                   stroke: color,
-                  strokeWidth: '2'
+                  strokeWidth: plotSettings.lineThickness || 2
                 }),
 
-                React.createElement('rect', {
-                  x: xCenter - 4,
-                  y: y - 4,
-                  width: 8,
-                  height: 8,
-                  fill: color
-                }),
+                renderMarker(xCenter, y, color, plotSettings.markerStyle, plotSettings.markerSize),
 
                 React.createElement('text', {
                   x: globalSettings.plotWidth - margin.right + 10,
@@ -1107,10 +1130,13 @@ function ForestPlotGenerator() {
                 fontWeight: 'bold'
               }, 'Pooled Effect'),
 
-              React.createElement('path', {
-                d: `M ${xCenter} ${y - 8} L ${xCenter + 8} ${y} L ${xCenter} ${y + 8} L ${xCenter - 8} ${y} Z`,
-                fill: '#000'
-              }),
+              renderMarker(
+                xCenter,
+                y,
+                plotSettings.pooledColor || '#000',
+                plotSettings.pooledStyle || 'diamond',
+                (plotSettings.markerSize || 8) * 2
+              ),
 
               React.createElement('text', {
                 x: globalSettings.plotWidth - margin.right + 10,
@@ -1222,7 +1248,7 @@ function ForestPlotGenerator() {
           key: plot.id,
           transform: `translate(${xOffset}, ${yOffset})`
         },
-          renderSinglePlot(plot.data, { ...plot.settings, title: plot.title }, true)
+          renderSinglePlot(plot.data, plot.settings, true)
         );
       })
     );
@@ -1324,7 +1350,14 @@ function ForestPlotGenerator() {
                 value: activePlot.title,
                 onChange: (e) => updateActivePlot({ title: e.target.value }),
                 className: 'px-3 py-1 border rounded text-sm',
-                placeholder: 'Plot Subtitle'
+                placeholder: 'Tab name'
+              }),
+              React.createElement('input', {
+                type: 'text',
+                value: settings.title || '',
+                onChange: (e) => updateActiveSettings({ title: e.target.value }),
+                className: 'px-3 py-1 border rounded text-sm',
+                placeholder: 'Displayed plot title'
               })
             )
           ),
@@ -1533,6 +1566,64 @@ function ForestPlotGenerator() {
                 React.createElement('option', { value: 'linear' }, 'Linear'),
                 React.createElement('option', { value: 'log' }, 'Logarithmic')
               )
+            ),
+            React.createElement('div', null,
+              React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Marker Style'),
+              React.createElement('select', {
+                value: settings.markerStyle || 'square',
+                onChange: (e) => updateActiveSettings({ markerStyle: e.target.value }),
+                className: 'w-full px-3 py-2 border rounded'
+              },
+                React.createElement('option', { value: 'square' }, 'Square'),
+                React.createElement('option', { value: 'circle' }, 'Circle'),
+                React.createElement('option', { value: 'diamond' }, 'Diamond'),
+                React.createElement('option', { value: 'triangle' }, 'Triangle')
+              )
+            ),
+            React.createElement('div', null,
+              React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Marker Size'),
+              React.createElement('input', {
+                type: 'number',
+                value: settings.markerSize != null ? settings.markerSize : 8,
+                onChange: (e) => updateActiveSettings({ markerSize: parseInt(e.target.value) || 8 }),
+                className: 'w-full px-3 py-2 border rounded',
+                min: '2',
+                max: '24'
+              })
+            ),
+            React.createElement('div', null,
+              React.createElement('label', { className: 'block mb-2 font-semibold' }, 'CI Line Thickness'),
+              React.createElement('input', {
+                type: 'number',
+                value: settings.lineThickness != null ? settings.lineThickness : 2,
+                onChange: (e) => updateActiveSettings({ lineThickness: parseFloat(e.target.value) || 2 }),
+                className: 'w-full px-3 py-2 border rounded',
+                step: '0.5',
+                min: '0.5',
+                max: '6'
+              })
+            ),
+            React.createElement('div', null,
+              React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Pooled Effect Style'),
+              React.createElement('select', {
+                value: settings.pooledStyle || 'diamond',
+                onChange: (e) => updateActiveSettings({ pooledStyle: e.target.value }),
+                className: 'w-full px-3 py-2 border rounded'
+              },
+                React.createElement('option', { value: 'diamond' }, 'Diamond'),
+                React.createElement('option', { value: 'square' }, 'Square'),
+                React.createElement('option', { value: 'circle' }, 'Circle'),
+                React.createElement('option', { value: 'triangle' }, 'Triangle')
+              )
+            ),
+            React.createElement('div', null,
+              React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Pooled Effect Color'),
+              React.createElement('input', {
+                type: 'color',
+                value: settings.pooledColor || '#000000',
+                onChange: (e) => updateActiveSettings({ pooledColor: e.target.value }),
+                className: 'w-full px-3 py-2 border rounded h-10'
+              })
             ),
             React.createElement('div', null,
               React.createElement('label', { className: 'block mb-2 font-semibold' }, 'Old Section Spacing (deprecated)'),
