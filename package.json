@@ -5,9 +5,12 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test",
+    "test:smoke": "node --test e2e/app.smoke.js",
+    "lint": "eslint .",
+    "build-css": "tailwindcss -i ./src/tailwind-input.css -o ./vendor/tailwind.css --minify",
     "build": "electron-builder --win --x64",
-    "build-mac": "electron-builder --mac",
-    "build-css": "tailwindcss -i ./src/tailwind-input.css -o ./vendor/tailwind.css --minify"
+    "build-mac": "electron-builder --mac"
   },
   "build": {
     "appId": "com.forestplot.generator",
@@ -36,7 +39,9 @@
     "electron": "^28.0.0",
     "electron-builder": "^24.9.0",
     "electron-icon-builder": "^2.0.1",
+    "eslint": "^9.39.5",
     "papaparse": "^5.4.1",
+    "playwright": "^1.63.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwindcss": "^3.4.19"

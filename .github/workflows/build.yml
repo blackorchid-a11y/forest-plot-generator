@@ -3,10 +3,36 @@ name: Build Apps
 on:
   push:
     branches: [ main ]
+  pull_request:
   workflow_dispatch:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Lint
+      run: npm run lint
+
+    - name: Unit tests
+      run: npm test
+
+    # The smoke test drives the real Electron window, so it needs a display.
+    - name: Smoke test
+      run: xvfb-run -a --server-args="-screen 0 1600x1000x24" npm run test:smoke
+
   build-windows:
+    needs: test
     runs-on: windows-latest
     
     steps:
@@ -15,7 +41,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '20'
     
     - name: Install dependencies
       run: npm install
@@ -30,6 +56,7 @@ jobs:
         path: dist/*.exe
 
   build-macos:
+    needs: test
     runs-on: macos-latest
     
     steps:
@@ -38,7 +65,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '20'
     
     - name: Install dependencies
       run: npm install

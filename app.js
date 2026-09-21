@@ -4,7 +4,7 @@ const { useState, useRef, useEffect } = React;
 const {
   computePooledEffect, isSignificant, isValidData, scaleValue,
   formatNumber, formatEstimate, formatPValue,
-  parseNumericCell, parseNumericInput, toNumber,
+  parseNumericInput, toNumber,
   buildRow, buildRowsFromRecords, describeMapping,
   validateProject, sortRowsByPosition, groupRowsIntoSections
 } = ForestPlotCore;
@@ -543,7 +543,6 @@ function ForestPlotGenerator() {
     if (scale === 'log') {
       // For log scale, use powers and half-powers
       const logMin = Math.log10(minVal);
-      const logMax = Math.log10(maxVal);
       const ticks = [];
 
       // Generate major ticks at powers of 10
@@ -1041,7 +1040,7 @@ function ForestPlotGenerator() {
         }
 
         // Render rows in this group
-        groupRows.forEach((row, rowIdx) => {
+        groupRows.forEach((row) => {
           const y = currentY + baseRowHeight / 2;
           const isValid = isValidData(row);
 
