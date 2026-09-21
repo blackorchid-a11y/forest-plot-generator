@@ -30,8 +30,8 @@ forest-plot-app/
 ```
 
 ## Key Files
-- **main.js**: Electron main process that creates the browser window
-- **index.html**: HTML template that loads React, Tailwind, and libraries via CDN
+- **main.js**: Electron main process: creates the window and owns all spreadsheet parsing
+- **index.html**: HTML template that loads the bundled libraries from `vendor/` and `lib/`, and declares the CSP
 - **app.js**: Contains the React application (forest plot generator UI and logic)
 - **package.json**: Project metadata, dependencies, and electron-builder configuration
 
@@ -92,8 +92,8 @@ npm install
 ## Code Conventions
 - **React**: Uses functional components with hooks
 - **Styling**: Tailwind utility classes
-- **File handling**: PapaCSV for CSV, XLSX for Excel
-- **Icons**: Lucide React icons via createIcon() pattern
+- **File handling**: PapaParse for CSV in the renderer; XLSX for Excel in the main process, reached through `window.xlsxBridge`
+- **Icons**: plain text/emoji in the markup; there is no icon library
 
 ## Important Notes
 - The renderer is sandboxed: `contextIsolation: true`, `nodeIntegration: false`.

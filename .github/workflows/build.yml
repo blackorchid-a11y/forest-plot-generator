@@ -24,6 +24,13 @@ jobs:
     - name: Lint
       run: npm run lint
 
+    # The stylesheet is generated from the classes used in the source, and is
+    # committed. Nothing enforced that until now, so it silently went stale.
+    - name: Stylesheet is up to date
+      run: |
+        npm run build-css
+        git diff --exit-code vendor/tailwind.css
+
     - name: Unit tests
       run: npm test
 
