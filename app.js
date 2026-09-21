@@ -1082,10 +1082,33 @@ function ForestPlotGenerator() {
               )
             );
           } else {
+            // An interval running past the axis is clamped for drawing, but it
+            // must not then look like a bound that genuinely ends there: the
+            // clamped end gets an arrowhead instead of a cap.
+            const lowerClamped = row.lowerCI < minVal;
+            const upperClamped = row.upperCI > maxVal;
             const x1 = xScale(Math.max(row.lowerCI, minVal));
             const x2 = xScale(Math.min(row.upperCI, maxVal));
             const xCenter = xScale(row.or);
+            const orOnScale = row.or >= minVal && row.or <= maxVal;
             const color = getBarColor(row);
+            const capOrArrow = (x, clamped, pointsLeft, key) => clamped
+              ? React.createElement('path', {
+                  key: key,
+                  d: pointsLeft
+                    ? `M ${x} ${y} L ${x + 8} ${y - 5} L ${x + 8} ${y + 5} Z`
+                    : `M ${x} ${y} L ${x - 8} ${y - 5} L ${x - 8} ${y + 5} Z`,
+                  fill: color
+                })
+              : React.createElement('line', {
+                  key: key,
+                  x1: x,
+                  y1: y - 5,
+                  x2: x,
+                  y2: y + 5,
+                  stroke: color,
+                  strokeWidth: '2'
+                });
 
             elements.push(
               React.createElement('g', { key: `row-${row.id}` },
@@ -1104,31 +1127,21 @@ function ForestPlotGenerator() {
                   strokeWidth: '2'
                 }),
 
-                React.createElement('line', {
-                  x1: x1,
-                  y1: y - 5,
-                  x2: x1,
-                  y2: y + 5,
-                  stroke: color,
-                  strokeWidth: '2'
-                }),
+                capOrArrow(x1, lowerClamped, true, 'cap-lower'),
 
-                React.createElement('line', {
-                  x1: x2,
-                  y1: y - 5,
-                  x2: x2,
-                  y2: y + 5,
-                  stroke: color,
-                  strokeWidth: '2'
-                }),
+                capOrArrow(x2, upperClamped, false, 'cap-upper'),
 
-                React.createElement('rect', {
+                // An off-scale estimate would otherwise paint its marker on top
+                // of the OR text column; the arrowhead already says "off scale"
+                // and the numeric label still carries the true value.
+                orOnScale ? React.createElement('rect', {
+                  key: 'marker',
                   x: xCenter - 4,
                   y: y - 4,
                   width: 8,
                   height: 8,
                   fill: color
-                }),
+                }) : null,
 
                 React.createElement('text', {
                   x: plotWidthPx - margin.right + 10,
