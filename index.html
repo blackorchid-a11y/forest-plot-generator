@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'">
   <title>Forest Plot Generator</title>
   <link rel="stylesheet" href="vendor/tailwind.css">
   <style>
@@ -20,10 +22,6 @@
   <script src="vendor/react-dom.production.min.js"></script>
   <script src="vendor/papaparse.min.js"></script>
   <script src="lib/core.js"></script>
-  <script>
-    // Load XLSX from node_modules instead of CDN
-    window.XLSX = require('xlsx');
-  </script>
   <script src="app.js"></script>
 </body>
 </html>

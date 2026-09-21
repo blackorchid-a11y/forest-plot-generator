@@ -74,24 +74,14 @@ const COLOR_PALETTE = [
 // header". Passing it when the sheet HAS headers is backwards: it names the
 // columns 0,1,2... and imports the header row as data. Omitting the option is
 // what makes SheetJS key each row by the header text.
-// The used range of a sheet, e.g. { start: 'A1', end: 'G42' }. Falls back to a
-// small default only when the sheet declares no range at all.
-function sheetUsedRange(workbook, sheetName) {
-  const worksheet = workbook.Sheets[sheetName];
-  const ref = worksheet && worksheet['!ref'];
-  if (!ref || !ref.includes(':')) return { start: 'A1', end: 'E10' };
-  const [start, end] = ref.split(':');
-  return { start, end };
+// Spreadsheet parsing lives behind the preload bridge, so the renderer needs no
+// Node access. Workbooks stay on the other side; we only hold a handle.
+function sheetUsedRange(handle, sheetName) {
+  return window.xlsxBridge.usedRange(handle, sheetName);
 }
 
-function readSheetRows(workbook, sheetName, cellRange, hasHeaders) {
-  const worksheet = workbook.Sheets[sheetName];
-  const options = {
-    range: XLSX.utils.decode_range(cellRange.start + ':' + cellRange.end),
-    defval: ''
-  };
-  if (!hasHeaders) options.header = 1;
-  return XLSX.utils.sheet_to_json(worksheet, options);
+function readSheetRows(handle, sheetName, cellRange, hasHeaders) {
+  return window.xlsxBridge.readRows(handle, sheetName, cellRange.start, cellRange.end, hasHeaders);
 }
 
 function ExcelImportWizard({ excelData, onImport, onCancel }) {
@@ -116,9 +106,9 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
     }
   }, [selectedSheet, cellRange, hasHeaders]);
 
-  const generatePreview = () => {
+  const generatePreview = async () => {
     try {
-      const jsonData = readSheetRows(excelData.workbook, selectedSheet, cellRange, hasHeaders);
+      const jsonData = await readSheetRows(excelData.handle, selectedSheet, cellRange, hasHeaders);
       setPreviewData(jsonData.slice(0, 5));
     } catch (error) {
       console.error('Preview error:', error);
@@ -131,9 +121,9 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
     return Object.keys(previewData[0]);
   };
 
-  const importData = () => {
+  const importData = async () => {
     try {
-      const jsonData = readSheetRows(excelData.workbook, selectedSheet, cellRange, hasHeaders);
+      const jsonData = await readSheetRows(excelData.handle, selectedSheet, cellRange, hasHeaders);
 
       // The wizard's own mapping wins; unreadable cells become null rather than
       // a plausible default, and are reported back to the user.
@@ -182,9 +172,9 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
           excelData?.sheets.map(sheet =>
             React.createElement('button', {
               key: sheet,
-              onClick: () => {
+              onClick: async () => {
                 setSelectedSheet(sheet);
-                setCellRange(sheetUsedRange(excelData.workbook, sheet));
+                setCellRange(await sheetUsedRange(excelData.handle, sheet));
                 setStep(2);
               },
               className: 'w-full p-4 border rounded hover:bg-blue-50 text-left font-medium'
@@ -464,6 +454,7 @@ function ForestPlotGenerator() {
 
   const handleExcelImport = (parsed, sheetName, unreadableCount = 0) => {
     updateActivePlot({ data: parsed });
+    if (excelData && window.xlsxBridge) window.xlsxBridge.close(excelData.handle);
     setShowExcelImport(false);
     setExcelData(null);
     alert(
@@ -476,6 +467,7 @@ function ForestPlotGenerator() {
   };
 
   const handleExcelCancel = () => {
+    if (excelData && window.xlsxBridge) window.xlsxBridge.close(excelData.handle);
     setShowExcelImport(false);
     setExcelData(null);
   };
@@ -523,24 +515,14 @@ function ForestPlotGenerator() {
           }
         });
       } else if (type === 'xlsx') {
-        console.log('Starting Excel file upload...');
-
-        if (typeof XLSX === 'undefined' || typeof XLSX.read !== 'function') {
-          throw new Error('XLSX library not loaded properly. Please refresh and try again.');
+        if (!window.xlsxBridge) {
+          throw new Error('Spreadsheet support is unavailable. Please restart the app.');
         }
 
-        console.log('Reading Excel file...');
         const arrayBuffer = await file.arrayBuffer();
-        console.log('File read, size:', arrayBuffer.byteLength);
+        const { handle, sheets } = await window.xlsxBridge.open(arrayBuffer);
 
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-        console.log('Workbook loaded, sheets:', workbook.SheetNames);
-
-        setExcelData({
-          workbook: workbook,
-          sheets: workbook.SheetNames,
-          filename: file.name
-        });
+        setExcelData({ handle, sheets, filename: file.name });
         setShowExcelImport(true);
       }
     } catch (error) {
