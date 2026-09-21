@@ -5,7 +5,7 @@ const {
   computePooledEffect, isSignificant, isValidData, scaleValue,
   formatNumber, formatEstimate, formatPValue,
   parseNumericCell, parseNumericInput, toNumber,
-  buildRowsFromRecords, describeMapping, resolveColumns,
+  buildRow, buildRowsFromRecords, describeMapping,
   validateProject, sortRowsByPosition, groupRowsIntoSections
 } = ForestPlotCore;
 
@@ -70,6 +70,30 @@ const COLOR_PALETTE = [
 ];
 
 // Excel Import Wizard Component (must be outside main component)
+// SheetJS's `header: 1` means "give me arrays of arrays", NOT "row 1 is the
+// header". Passing it when the sheet HAS headers is backwards: it names the
+// columns 0,1,2... and imports the header row as data. Omitting the option is
+// what makes SheetJS key each row by the header text.
+// The used range of a sheet, e.g. { start: 'A1', end: 'G42' }. Falls back to a
+// small default only when the sheet declares no range at all.
+function sheetUsedRange(workbook, sheetName) {
+  const worksheet = workbook.Sheets[sheetName];
+  const ref = worksheet && worksheet['!ref'];
+  if (!ref || !ref.includes(':')) return { start: 'A1', end: 'E10' };
+  const [start, end] = ref.split(':');
+  return { start, end };
+}
+
+function readSheetRows(workbook, sheetName, cellRange, hasHeaders) {
+  const worksheet = workbook.Sheets[sheetName];
+  const options = {
+    range: XLSX.utils.decode_range(cellRange.start + ':' + cellRange.end),
+    defval: ''
+  };
+  if (!hasHeaders) options.header = 1;
+  return XLSX.utils.sheet_to_json(worksheet, options);
+}
+
 function ExcelImportWizard({ excelData, onImport, onCancel }) {
   const [step, setStep] = useState(1);
   const [selectedSheet, setSelectedSheet] = useState('');
@@ -94,13 +118,7 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
 
   const generatePreview = () => {
     try {
-      const worksheet = excelData.workbook.Sheets[selectedSheet];
-      const range = XLSX.utils.decode_range(cellRange.start + ':' + cellRange.end);
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, {
-        range: range,
-        header: hasHeaders ? 1 : undefined,
-        defval: ''
-      });
+      const jsonData = readSheetRows(excelData.workbook, selectedSheet, cellRange, hasHeaders);
       setPreviewData(jsonData.slice(0, 5));
     } catch (error) {
       console.error('Preview error:', error);
@@ -115,28 +133,18 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
 
   const importData = () => {
     try {
-      const worksheet = excelData.workbook.Sheets[selectedSheet];
-      const range = XLSX.utils.decode_range(cellRange.start + ':' + cellRange.end);
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, {
-        range: range,
-        header: hasHeaders ? 1 : undefined,
-        defval: ''
+      const jsonData = readSheetRows(excelData.workbook, selectedSheet, cellRange, hasHeaders);
+
+      // The wizard's own mapping wins; unreadable cells become null rather than
+      // a plausible default, and are reported back to the user.
+      let unreadableCount = 0;
+      const parsed = jsonData.map((row, idx) => {
+        const built = buildRow(row, columnMapping, idx);
+        if (built.unreadable) unreadableCount += 1;
+        return built.row;
       });
 
-      const parsed = jsonData.map((row, idx) => ({
-        id: idx + 1,
-        variable: row[columnMapping.variable] || `Variable ${idx + 1}`,
-        or: parseFloat(row[columnMapping.or]) || 1.0,
-        lowerCI: parseFloat(row[columnMapping.lowerCI]) || 0.8,
-        upperCI: parseFloat(row[columnMapping.upperCI]) || 1.2,
-        pValue: parseFloat(row[columnMapping.pValue]) || 0.05,
-        sampleSize: row[columnMapping.sampleSize] || '',
-        group: row[columnMapping.group] || '',
-        color: 'auto',
-        position: idx + 1
-      }));
-
-      onImport(parsed, selectedSheet);
+      onImport(parsed, selectedSheet, unreadableCount);
     } catch (error) {
       console.error('Import error:', error);
       alert('Error importing data: ' + error.message);
@@ -174,7 +182,11 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
           excelData?.sheets.map(sheet =>
             React.createElement('button', {
               key: sheet,
-              onClick: () => { setSelectedSheet(sheet); setStep(2); },
+              onClick: () => {
+                setSelectedSheet(sheet);
+                setCellRange(sheetUsedRange(excelData.workbook, sheet));
+                setStep(2);
+              },
               className: 'w-full p-4 border rounded hover:bg-blue-50 text-left font-medium'
             }, sheet)
           )
@@ -441,11 +453,17 @@ function ForestPlotGenerator() {
     updateActivePlot({ data: newData });
   };
 
-  const handleExcelImport = (parsed, sheetName) => {
+  const handleExcelImport = (parsed, sheetName, unreadableCount = 0) => {
     updateActivePlot({ data: parsed });
     setShowExcelImport(false);
     setExcelData(null);
-    alert(`Successfully imported ${parsed.length} rows from ${sheetName}`);
+    alert(
+      `Imported ${parsed.length} rows from ${sheetName}.` +
+      (unreadableCount > 0
+        ? `\n\n${unreadableCount} row(s) had values that could not be read; ` +
+          'those fields were left empty and will not be plotted.'
+        : '')
+    );
   };
 
   const handleExcelCancel = () => {
@@ -468,21 +486,23 @@ function ForestPlotGenerator() {
               const rawData = results.data;
               const headers = Object.keys(rawData[0] || {});
 
-              const parsed = rawData.map((row, idx) => ({
-                id: idx + 1,
-                variable: row[headers[0]] || `Variable ${idx + 1}`,
-                or: parseFloat(row[headers[1]]) || 1.0,
-                lowerCI: parseFloat(row[headers[2]]) || 0.8,
-                upperCI: parseFloat(row[headers[3]]) || 1.2,
-                pValue: parseFloat(row[headers[4]]) || 0.05,
-                sampleSize: row[headers[5]] || '',
-                group: row[headers[6]] || '',
-                color: 'auto',
-                position: idx + 1
-              }));
-              updateActivePlot({ data: parsed });
+              // Columns are matched by name, falling back to the conventional
+              // order only for headers that cannot be recognised. Mapping by
+              // position alone silently swapped OR and lower CI in any file
+              // that did not use the expected column order.
+              const { rows, mapping, matchedByName, unreadableCount } =
+                buildRowsFromRecords(rawData, headers);
+
+              updateActivePlot({ data: rows });
               setInputMode('manual');
-              alert(`Successfully imported ${parsed.length} rows from CSV file`);
+              alert(
+                `Imported ${rows.length} rows from CSV.\n\nColumns used:\n` +
+                describeMapping(mapping, matchedByName) +
+                (unreadableCount > 0
+                  ? `\n\n${unreadableCount} row(s) had values that could not be read; ` +
+                    'those fields were left empty and will not be plotted.'
+                  : '')
+              );
             } catch (error) {
               console.error('CSV parsing error:', error);
               alert('Error parsing CSV file: ' + error.message);
