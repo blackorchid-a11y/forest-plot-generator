@@ -353,8 +353,8 @@ Built with modern web technologies for a native desktop experience:
 
 ---
 
-**Version:** 3.0.0 - Multi-Plot Release  
-**Release Date:** January 2025  
+**Version:** 3.1.0 - Correctness Release  
+**Release Date:** September 2026  
 **Platform:** Windows & macOS  
 **Build:** Electron 28
 

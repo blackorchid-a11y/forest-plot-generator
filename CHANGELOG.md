@@ -5,7 +5,7 @@ All notable changes to the Forest Plot Generator will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.1.0] - 2026-09-21
 
 ### Fixed
 - **PNG export now works.** It read plot dimensions from the wrong settings object, so the canvas came out zero-sized and "Download PNG (800 DPI)" silently did nothing. Multi-plot figures now export in full instead of being cropped to one plot.
