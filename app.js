@@ -624,6 +624,18 @@ function ForestPlotGenerator() {
 
   const downloadPNG = () => {
     const svgElement = svgRef.current;
+    if (!svgElement) return;
+
+    // Size the canvas from the rendered SVG itself. globalSettings.plotWidth /
+    // plotHeight describe a single plot, so using them would crop multi-plot
+    // layouts and drop the main title band.
+    const width = Number(svgElement.getAttribute('width'));
+    const height = Number(svgElement.getAttribute('height'));
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      alert('Cannot export PNG: the plot has invalid dimensions.\n\nCheck the plot width and height under Project Settings.');
+      return;
+    }
+
     const svgData = new XMLSerializer().serializeToString(svgElement);
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -631,15 +643,19 @@ function ForestPlotGenerator() {
 
     const dpi = 800;
     const scaleFactor = dpi / 96;
-    canvas.width = settings.plotWidth * scaleFactor;
-    canvas.height = settings.plotHeight * scaleFactor;
+    canvas.width = Math.round(width * scaleFactor);
+    canvas.height = Math.round(height * scaleFactor);
     ctx.scale(scaleFactor, scaleFactor);
 
     img.onload = () => {
       ctx.fillStyle = 'white';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
       canvas.toBlob((blob) => {
+        if (!blob) {
+          alert('PNG export failed: the image could not be encoded. Try reducing the plot size.');
+          return;
+        }
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -647,6 +663,10 @@ function ForestPlotGenerator() {
         link.click();
         URL.revokeObjectURL(url);
       });
+    };
+
+    img.onerror = () => {
+      alert('PNG export failed: the plot could not be rasterized.');
     };
 
     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
@@ -742,6 +762,50 @@ function ForestPlotGenerator() {
     return str.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
   };
 
+  // Error cards render inside the outer <svg>, so they must be built from SVG
+  // elements: HTML tags created in that subtree land in the SVG namespace and
+  // paint nothing at all. Native <text> also keeps the message visible in PNG
+  // and SVG exports, which a <foreignObject> would not.
+  const renderPlotErrorCard = (title, lines, color) => {
+    const stroke = color || '#dc2626';
+    const fill = stroke === '#dc2626' ? '#fef2f2' : '#fff7ed';
+    const w = globalSettings.plotWidth;
+    const h = globalSettings.plotHeight;
+    const boxHeight = 90 + lines.length * 24;
+
+    return React.createElement('g', null,
+      React.createElement('rect', { x: 0, y: 0, width: w, height: h, fill: 'white' }),
+      React.createElement('rect', {
+        x: 20,
+        y: Math.max((h - boxHeight) / 2, 10),
+        width: Math.max(w - 40, 40),
+        height: boxHeight,
+        fill: fill,
+        stroke: stroke,
+        strokeWidth: 2,
+        rx: 8
+      }),
+      React.createElement('text', {
+        x: w / 2,
+        y: Math.max((h - boxHeight) / 2, 10) + 40,
+        textAnchor: 'middle',
+        fill: stroke,
+        fontSize: 20,
+        fontWeight: 'bold',
+        fontFamily: 'Arial'
+      }, title),
+      ...lines.map((line, i) => React.createElement('text', {
+        key: 'err-line-' + i,
+        x: w / 2,
+        y: Math.max((h - boxHeight) / 2, 10) + 72 + i * 24,
+        textAnchor: 'middle',
+        fill: '#374151',
+        fontSize: 14,
+        fontFamily: 'Arial'
+      }, line))
+    );
+  };
+
   const renderSinglePlot = (plotData, plotSettings, isSubPlot = false) => {
     // CRASH FIX v2.2.3: Validate manual X-axis settings before rendering
     if (plotSettings.xAxisMode === 'manual') {
@@ -750,63 +814,57 @@ function ForestPlotGenerator() {
 
       // Check if values are valid numbers
       if (plotSettings.xAxisMin !== '' && isNaN(minVal)) {
-        return React.createElement('div', { className: 'p-8 text-center text-red-600' },
-          React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid X-Axis Configuration'),
-          React.createElement('p', null, 'Minimum value must be a valid number.'),
-          React.createElement('p', { className: 'mt-2 text-sm' }, 'Please check your X-Axis settings.')
-        );
+        return renderPlotErrorCard('Invalid X-Axis Configuration', [
+          'Minimum value must be a valid number.',
+          'Please check your X-Axis settings.'
+        ]);
       }
 
       if (plotSettings.xAxisMax !== '' && isNaN(maxVal)) {
-        return React.createElement('div', { className: 'p-8 text-center text-red-600' },
-          React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid X-Axis Configuration'),
-          React.createElement('p', null, 'Maximum value must be a valid number.'),
-          React.createElement('p', { className: 'mt-2 text-sm' }, 'Please check your X-Axis settings.')
-        );
+        return renderPlotErrorCard('Invalid X-Axis Configuration', [
+          'Maximum value must be a valid number.',
+          'Please check your X-Axis settings.'
+        ]);
       }
 
       // Check if both values are provided
       if (plotSettings.xAxisMin !== '' && plotSettings.xAxisMax !== '') {
         // Check if min < max
         if (minVal >= maxVal) {
-          return React.createElement('div', { className: 'p-8 text-center text-red-600' },
-            React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid X-Axis Range'),
-            React.createElement('p', null, `Minimum value (${minVal}) must be less than maximum value (${maxVal}).`),
-            React.createElement('p', { className: 'mt-2 text-sm' }, 'Please adjust your X-Axis settings.')
-          );
+          return renderPlotErrorCard('Invalid X-Axis Range', [
+            `Minimum value (${minVal}) must be less than maximum value (${maxVal}).`,
+            'Please adjust your X-Axis settings.'
+          ]);
         }
 
         // Check if values are positive
         if (minVal <= 0 || maxVal <= 0) {
-          return React.createElement('div', { className: 'p-8 text-center text-red-600' },
-            React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Invalid X-Axis Range'),
-            React.createElement('p', null, 'X-Axis values must be positive numbers greater than 0.'),
-            React.createElement('p', { className: 'mt-2 text-sm' }, `Current range: ${minVal} to ${maxVal}`),
-            React.createElement('p', { className: 'mt-2 text-sm' }, 'For log scale, all values must be > 0.')
-          );
+          return renderPlotErrorCard('Invalid X-Axis Range', [
+            'X-Axis values must be positive numbers greater than 0.',
+            `Current range: ${minVal} to ${maxVal}`,
+            'For log scale, all values must be > 0.'
+          ]);
         }
 
         // Check for extremely small ranges that might cause issues
         const range = maxVal - minVal;
         if (range < 0.01) {
-          return React.createElement('div', { className: 'p-8 text-center text-red-600' },
-            React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ X-Axis Range Too Small'),
-            React.createElement('p', null, 'The difference between min and max is too small.'),
-            React.createElement('p', { className: 'mt-2 text-sm' }, `Current range: ${range.toFixed(6)}`),
-            React.createElement('p', { className: 'mt-2 text-sm' }, 'Please use a larger range. Minimum recommended: 0.1')
-          );
+          return renderPlotErrorCard('X-Axis Range Too Small', [
+            'The difference between min and max is too small.',
+            `Current range: ${range.toFixed(6)}`,
+            'Please use a larger range. Minimum recommended: 0.1'
+          ]);
         }
 
         // For log scale, check if range is reasonable
         if (plotSettings.scale === 'log') {
           const logRange = Math.log10(maxVal) - Math.log10(minVal);
           if (logRange < 0.1) {
-            return React.createElement('div', { className: 'p-8 text-center text-orange-600' },
-              React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Warning: Narrow Logarithmic Scale'),
-              React.createElement('p', null, 'The logarithmic scale range is very narrow.'),
-              React.createElement('p', { className: 'mt-2 text-sm' }, `Current range: ${minVal} to ${maxVal}`),
-              React.createElement('p', { className: 'mt-2 text-sm' }, 'Consider using a wider range or linear scale.')
-            );
+            return renderPlotErrorCard('Warning: Narrow Logarithmic Scale', [
+              'The logarithmic scale range is very narrow.',
+              `Current range: ${minVal} to ${maxVal}`,
+              'Consider using a wider range or linear scale.'
+            ], '#ea580c');
           }
         }
       }
@@ -1155,7 +1213,6 @@ function ForestPlotGenerator() {
       );
 
       return React.createElement('svg', {
-        ref: svgRef,
         width: globalSettings.plotWidth,
         height: globalSettings.plotHeight,
         style: { fontFamily: plotSettings.font, fontSize: plotSettings.fontSize }
@@ -1170,19 +1227,12 @@ function ForestPlotGenerator() {
       );
     } catch (error) {
       console.error('Error rendering forest plot:', error);
-      return React.createElement('div', { className: 'p-8 text-center text-red-600' },
-        React.createElement('h3', { className: 'text-xl font-bold mb-2' }, '⚠️ Error Rendering Forest Plot'),
-        React.createElement('p', null, 'An error occurred while generating the plot.'),
-        React.createElement('p', { className: 'mt-2 text-sm font-mono bg-red-50 p-2 rounded' }, error.message),
-        React.createElement('p', { className: 'mt-4 text-sm' }, 'Please check your settings and data, then try again.'),
-        React.createElement('p', { className: 'mt-2 text-sm' }, 'Common issues:'),
-        React.createElement('ul', { className: 'list-disc list-inside text-left mt-2 ml-4' },
-          React.createElement('li', null, 'Invalid X-axis range'),
-          React.createElement('li', null, 'Very small or very large numbers'),
-          React.createElement('li', null, 'Negative values with log scale'),
-          React.createElement('li', null, 'Invalid data in variables')
-        )
-      );
+      return renderPlotErrorCard('Error Rendering Forest Plot', [
+        'An error occurred while generating the plot:',
+        error.message,
+        'Common causes: invalid X-axis range, very small or very large',
+        'numbers, negative values on a log scale, or invalid data in a row.'
+      ]);
     }
   };
 
