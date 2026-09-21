@@ -1,6 +1,40 @@
-# Forest Plot Generator v3.0.0
+# Forest Plot Generator v3.1.0
 
 A professional desktop application for generating publication-ready forest plots with **multi-plot support**, advanced customization options, and smart axis controls.
+
+## 🌟 What's New in v3.1.0
+
+A correctness release. No new features — it fixes things that were quietly wrong.
+
+### Fixed: results you can trust
+- **PNG export now works.** It produced nothing at all before, silently.
+- **Meta-analysis is properly weighted.** The pooled effect averaged the odds ratios and
+  the confidence limits with every study counting equally. It now uses fixed-effect
+  inverse-variance weighting on the log scale, so a large trial outweighs a small one, and
+  it reports a real p-value. **Pooled figures from earlier versions should be regenerated.**
+- **Imports no longer invent numbers.** An unreadable cell (blank, `N/A`, text) used to
+  become OR 1.0, CI 0.8–1.2, p 0.05. Such cells are now left empty and reported to you.
+- **CSV columns are matched by name**, so a file whose columns are in a different order is
+  no longer imported with values silently swapped.
+- **Confidence intervals that run past the axis are drawn with arrowheads**, instead of
+  looking identical to intervals that genuinely end there.
+
+### Changed: one habit to unlearn
+- **The Excel "first row contains column headers" checkbox was inverted.** Ticking it used
+  to name your columns `0,1,2,3` and import the header row as data. It now does what it
+  says — if you had learned to untick it, tick it from now on.
+
+### Fixed: the app itself
+- **Works offline.** Libraries were fetched from the internet at launch, so the app showed
+  a blank window on a machine without a connection. Everything is now bundled.
+- **Error messages are visible.** Invalid settings produced a blank preview with no
+  explanation; they now show a readable card.
+- **Malformed project files no longer white-screen the app**, and clearing a numeric field
+  no longer blanks the plot.
+- **DevTools no longer opens on launch**, and the Edit menu is restored, so copy and paste
+  work on macOS.
+
+---
 
 ## 🌟 What's New in v3.0.0
 
@@ -99,7 +133,7 @@ Perfect for:
 ## 🚀 Getting Started
 
 ### Installation
-1. Download the latest release (v3.0.0)
+1. Download the latest release (v3.1.0)
 2. Run the installer (Windows or macOS)
 3. Launch Forest Plot Generator
 
@@ -135,8 +169,17 @@ Perfect for:
 - **P-Value**: Statistical significance (displayed if "Show P-Values" enabled)
 - **Sample Size**: Number of observations
 - **Group/Section**: Section name for grouping
-- **Position**: Custom sort order within sections
+- **Position**: Sort order for rows and, through them, for sections
 - **Color**: Custom color (or "Auto" for automatic)
+
+### How columns are read
+- Columns are matched by **name** first (`OR`, `Odds Ratio`, `HR`, `Lower CI`, `LCL`,
+  `P-value`, `N`, `Group`, and similar), so your file does not have to be in the order
+  below. Only files whose headers mean nothing to the app fall back to column order.
+- Cells that cannot be read as numbers are **left empty**, never guessed. The import tells
+  you how many rows were affected, and such rows are excluded from the plot rather than
+  plotted as a false result.
+- A comma decimal separator (`1,52`) is understood.
 
 ### Excel/CSV Format Example
 ```
@@ -213,9 +256,10 @@ Create complex figures with multiple plots:
 Group variables by category (e.g., mortality outcomes, morbidity outcomes, laboratory findings):
 - Displays section headers in bold
 - Adjustable spacing before/after section titles
-- Maintains order as entered
 - Independent font size for section titles
-- Manual position control within sections
+- **Position controls the whole layout**: sections are ordered by their lowest row
+  position, and rows by position within a section, so the editing table always matches
+  the plot
 
 ### Smart Axis Scaling
 The automatic mode intelligently:
@@ -317,7 +361,7 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 ### Troubleshooting
 - Check the FAQ section in NEW_FEATURES_v3.0.0.md
 - Review MIGRATION_GUIDE_v3.0.0.md for common issues
-- Ensure you're running the latest version (v3.0.0)
+- Ensure you're running the latest version (v3.1.0)
 
 ### Reporting Issues
 For bugs, questions, or feature requests:
@@ -357,6 +401,24 @@ Built with modern web technologies for a native desktop experience:
 **Release Date:** September 2026  
 **Platform:** Windows & macOS  
 **Build:** Electron 28
+
+---
+
+## 🛠️ Building from Source
+
+```bash
+npm install            # install dependencies
+npm start              # run in development
+npm test               # unit tests
+npm run test:smoke     # end-to-end test against the real app (needs a display)
+npm run lint           # ESLint
+npm run build          # Windows installer
+npm run build-mac      # macOS DMG
+```
+
+All libraries are bundled in `vendor/`, so the app runs with no network access. If you
+add Tailwind classes, run `npm run build-css` to regenerate the stylesheet. CI runs the
+lint and both test suites before it will build an installer.
 
 ---
 
