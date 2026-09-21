@@ -40,6 +40,19 @@ function writeFixtures() {
 
   fs.writeFileSync(path.join(fixtureDir, 'empty-plots.json'),
     JSON.stringify({ version: '2.0', plots: [] }));
+
+  // An <input type="number"> sanitises "1e400" away, but a project file carries
+  // the setting as a raw string straight into state.
+  fs.writeFileSync(path.join(fixtureDir, 'overflow-axis.json'), JSON.stringify({
+    version: '2.0',
+    globalSettings: { mainTitle: 'Axis check', layout: 'vertical', plotWidth: 800, plotHeight: 600 },
+    plots: [{
+      id: 1,
+      title: 'Plot 1',
+      data: [{ id: 1, variable: 'A', or: 1.5, lowerCI: 1.2, upperCI: 1.9, pValue: 0.01, sampleSize: '', group: '', color: 'auto', position: 1 }],
+      settings: { scale: 'linear', font: 'Arial', fontSize: 14, xAxisMode: 'manual', xAxisMin: '0.1', xAxisMax: '1e400' }
+    }]
+  }));
 }
 
 // Renders the current plot the same way downloadPNG does and decodes the
@@ -178,6 +191,77 @@ test('an invalid axis range shows a visible error card', async () => {
   // Export must still work while the card is showing.
   const png = await exportPng();
   assert.ok(png.isPNG);
+
+  await win.locator('select').filter({ hasText: 'Manual Control' }).selectOption('auto');
+  await win.waitForTimeout(800);
+});
+
+test('a non-finite axis max does not freeze the app', async () => {
+  // This is the regression test that matters most on this branch: the failure
+  // mode was a synchronous infinite loop in tick generation, which no
+  // try/catch or ErrorBoundary can recover from, and an unresponsive renderer
+  // cannot answer evaluate() at all. The number input sanitises "1e400" away,
+  // so the reachable route is a project file, which carries the raw string.
+  await win.evaluate(() => { window.__alerts = []; });
+  await win.locator('input[accept=".json"]').setInputFiles(path.join(fixtureDir, 'overflow-axis.json'));
+  await win.waitForTimeout(2000);
+
+  const state = await win.evaluate(() => ({
+    alive: true,
+    maxSetting: document.querySelector('input[placeholder="e.g., 10"]')
+      ? document.querySelector('input[placeholder="e.g., 10"]').value : null,
+    texts: [...document.querySelectorAll('svg text')].map((t) => t.textContent)
+  }), { timeout: 10000 });
+
+  assert.ok(state.alive, 'the renderer stopped responding');
+  // Assert the card's own wording, not a loose pattern that plot content could
+  // satisfy by accident.
+  assert.ok(state.texts.includes('Invalid X-Axis Configuration'),
+    `no error card; svg text was ${JSON.stringify(state.texts)}`);
+  assert.ok(state.texts.some((t) => t.includes('must be a finite number')),
+    `card did not explain the overflow: ${JSON.stringify(state.texts)}`);
+
+  // Back to a usable axis for the tests that follow.
+  await win.locator('select').filter({ hasText: 'Manual Control' }).selectOption('auto');
+  await win.waitForTimeout(800);
+});
+
+test('an off-scale interval stays inside the plot area', async () => {
+  // Clamping only the lower bound against the lower limit drew this bar
+  // backwards, out of the plot and through the OR text column.
+  await win.getByText('Add Row').click();
+  await win.waitForTimeout(500);
+
+  const cells = win.locator('tbody tr').last().locator('input');
+  await cells.nth(1).fill('Way off scale');
+  await cells.nth(2).fill('30');
+  await cells.nth(3).fill('20');
+  await cells.nth(4).fill('50');
+  await win.waitForTimeout(400);
+
+  await win.locator('select').filter({ hasText: 'Automatic (Smart)' }).selectOption('manual');
+  await win.waitForTimeout(600);
+  await win.getByPlaceholder('e.g., 0.1').first().fill('0.1');
+  await win.getByPlaceholder('e.g., 10').first().fill('10');
+  await win.waitForTimeout(1200);
+
+  const geometry = await win.evaluate(() => {
+    const svg = document.querySelector('svg');
+    const width = Number(svg.getAttribute('width'));
+    const xs = [];
+    svg.querySelectorAll('line').forEach((l) => {
+      xs.push(Number(l.getAttribute('x1')), Number(l.getAttribute('x2')));
+    });
+    svg.querySelectorAll('path').forEach((pathEl) => {
+      (pathEl.getAttribute('d').match(/-?\d+(\.\d+)?/g) || [])
+        .forEach((n, i) => { if (i % 2 === 0) xs.push(Number(n)); });
+    });
+    return { width, min: Math.min(...xs), max: Math.max(...xs) };
+  });
+
+  assert.ok(geometry.min >= 0, `a drawn x was left of the plot: ${geometry.min}`);
+  assert.ok(geometry.max <= geometry.width,
+    `a drawn x ran past the plot width ${geometry.width}: ${geometry.max}`);
 
   await win.locator('select').filter({ hasText: 'Manual Control' }).selectOption('auto');
   await win.waitForTimeout(800);

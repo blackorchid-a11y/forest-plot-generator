@@ -348,9 +348,8 @@ Copyright © 2025 Forest Plot Generator. All rights reserved.
 Built with modern web technologies for a native desktop experience:
 - **Electron** - Cross-platform desktop framework
 - **React** - User interface library
-- **XLSX.js** - Excel file processing
+- **SheetJS (XLSX)** - Excel file processing
 - **PapaParse** - CSV parsing
-- **Lucide Icons** - Beautiful icon set
 
 ---
 

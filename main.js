@@ -8,38 +8,102 @@ const XLSX = require('xlsx');
 const workbooks = new Map();
 let nextHandle = 1;
 
-const getWorkbook = (handle) => {
-  const workbook = workbooks.get(handle);
-  if (!workbook) throw new Error('That spreadsheet is no longer open.');
-  return workbook;
+// This runs in the main process, so an unbounded read freezes the entire app,
+// window included. A sheet can declare any '!ref' it likes and the range fields
+// are user-editable, so both are treated as untrusted and capped.
+const MAX_ROWS = 50000;
+const MAX_COLS = 256;
+
+const getEntry = (handle) => {
+  const entry = workbooks.get(handle);
+  if (!entry) throw new Error('That spreadsheet is no longer open.');
+  return entry;
+};
+
+const getSheet = (handle, sheetName) => {
+  const worksheet = getEntry(handle).workbook.Sheets[sheetName];
+  if (!worksheet) throw new Error(`Sheet "${sheetName}" is not in this file.`);
+  return worksheet;
+};
+
+// A renderer that navigates or reloads loses its handles, so the workbooks it
+// opened would otherwise sit in memory for the life of the process. The
+// ErrorBoundary's reload and Ctrl+R in development both do exactly that.
+const releaseFor = (webContentsId) => {
+  for (const [handle, entry] of workbooks) {
+    if (entry.owner === webContentsId) workbooks.delete(handle);
+  }
+};
+
+// Intersects the requested range with the sheet's real extent, then caps it.
+const clampRange = (worksheet, start, end) => {
+  let requested;
+  try {
+    requested = XLSX.utils.decode_range(String(start) + ':' + String(end));
+  } catch {
+    throw new Error('That cell range is not valid.');
+  }
+
+  const ref = worksheet['!ref'];
+  const extent = ref ? XLSX.utils.decode_range(ref) : requested;
+
+  const range = {
+    s: {
+      r: Math.max(requested.s.r, extent.s.r, 0),
+      c: Math.max(requested.s.c, extent.s.c, 0)
+    },
+    e: {
+      r: Math.min(requested.e.r, extent.e.r),
+      c: Math.min(requested.e.c, extent.e.c)
+    }
+  };
+
+  let truncated = range.e.r < requested.e.r || range.e.c < requested.e.c;
+
+  if (range.e.r - range.s.r + 1 > MAX_ROWS) {
+    range.e.r = range.s.r + MAX_ROWS - 1;
+    truncated = true;
+  }
+  if (range.e.c - range.s.c + 1 > MAX_COLS) {
+    range.e.c = range.s.c + MAX_COLS - 1;
+    truncated = true;
+  }
+
+  const empty = range.e.r < range.s.r || range.e.c < range.s.c;
+  return { range, truncated, empty };
 };
 
 function registerSpreadsheetHandlers() {
   ipcMain.handle('xlsx:open', (event, arrayBuffer) => {
     const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
     const handle = nextHandle++;
-    workbooks.set(handle, workbook);
+    // One file open at a time per window; opening another releases the last.
+    releaseFor(event.sender.id);
+    workbooks.set(handle, { workbook, owner: event.sender.id });
     return { handle, sheets: workbook.SheetNames };
   });
 
   ipcMain.handle('xlsx:usedRange', (event, handle, sheetName) => {
-    const worksheet = getWorkbook(handle).Sheets[sheetName];
-    const ref = worksheet && worksheet['!ref'];
+    const worksheet = getSheet(handle, sheetName);
+    const ref = worksheet['!ref'];
     if (!ref || !ref.includes(':')) return { start: 'A1', end: 'E10' };
-    const [start, end] = ref.split(':');
-    return { start, end };
+    const { range } = clampRange(worksheet, ...ref.split(':'));
+    return {
+      start: XLSX.utils.encode_cell(range.s),
+      end: XLSX.utils.encode_cell(range.e)
+    };
   });
 
   // SheetJS's `header: 1` means "give me arrays of arrays", NOT "row 1 is the
   // header". Omitting the option is what makes it key each row by header text.
   ipcMain.handle('xlsx:readRows', (event, handle, sheetName, start, end, hasHeaders) => {
-    const worksheet = getWorkbook(handle).Sheets[sheetName];
-    const options = {
-      range: XLSX.utils.decode_range(start + ':' + end),
-      defval: ''
-    };
+    const worksheet = getSheet(handle, sheetName);
+    const { range, truncated, empty } = clampRange(worksheet, start, end);
+    if (empty) return { rows: [], truncated: false };
+
+    const options = { range, defval: '' };
     if (!hasHeaders) options.header = 1;
-    return XLSX.utils.sheet_to_json(worksheet, options);
+    return { rows: XLSX.utils.sheet_to_json(worksheet, options), truncated };
   });
 
   ipcMain.handle('xlsx:close', (event, handle) => {
@@ -92,6 +156,13 @@ function createWindow() {
       nodeIntegration: false
     }
   });
+
+  // Captured now: reading it back after the window is gone would throw.
+  const webContentsId = win.webContents.id;
+  win.webContents.on('did-start-navigation', (event, url, isInPlace, isMainFrame) => {
+    if (isMainFrame) releaseFor(webContentsId);
+  });
+  win.on('closed', () => releaseFor(webContentsId));
 
   win.loadFile('index.html');
   win.maximize();

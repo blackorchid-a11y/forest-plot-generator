@@ -9,6 +9,29 @@ const {
   validateProject, sortRowsByPosition, groupRowsIntoSections
 } = ForestPlotCore;
 
+// Every plot's settings start from these. Projects written by older versions
+// are merged over them on load, so a setting added later is never missing at
+// render time -- an absent xAxisTicks used to throw and take the plot down.
+const DEFAULT_PLOT_SETTINGS = {
+  scale: 'linear',
+  font: 'Arial',
+  fontSize: 14,
+  groupTitleFontSize: 16,
+  showGridlines: false,
+  metaAnalysis: false,
+  showPValues: false,
+  alignVariablesLeft: false,
+  title: 'Forest Plot', // Subtitle for this plot
+  footnote: 'Error bars represent 95% confidence intervals',
+  groupSpacing: 30,
+  spacingBeforeGroupTitle: 20,
+  spacingAfterGroupTitle: 5,
+  xAxisMode: 'auto',
+  xAxisMin: '',
+  xAxisMax: '',
+  xAxisTicks: ''
+};
+
 // Comprehensive color palette
 const COLOR_PALETTE = [
   { name: 'Auto', value: 'auto' },
@@ -80,6 +103,8 @@ function sheetUsedRange(handle, sheetName) {
   return window.xlsxBridge.usedRange(handle, sheetName);
 }
 
+// Resolves to { rows, truncated }; the main process caps how much of a sheet it
+// will walk, and says so rather than dropping rows silently.
 function readSheetRows(handle, sheetName, cellRange, hasHeaders) {
   return window.xlsxBridge.readRows(handle, sheetName, cellRange.start, cellRange.end, hasHeaders);
 }
@@ -108,8 +133,8 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
 
   const generatePreview = async () => {
     try {
-      const jsonData = await readSheetRows(excelData.handle, selectedSheet, cellRange, hasHeaders);
-      setPreviewData(jsonData.slice(0, 5));
+      const { rows } = await readSheetRows(excelData.handle, selectedSheet, cellRange, hasHeaders);
+      setPreviewData(rows.slice(0, 5));
     } catch (error) {
       console.error('Preview error:', error);
       setPreviewData([]);
@@ -123,18 +148,18 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
 
   const importData = async () => {
     try {
-      const jsonData = await readSheetRows(excelData.handle, selectedSheet, cellRange, hasHeaders);
+      const { rows, truncated } = await readSheetRows(excelData.handle, selectedSheet, cellRange, hasHeaders);
 
       // The wizard's own mapping wins; unreadable cells become null rather than
       // a plausible default, and are reported back to the user.
       let unreadableCount = 0;
-      const parsed = jsonData.map((row, idx) => {
+      const parsed = rows.map((row, idx) => {
         const built = buildRow(row, columnMapping, idx);
         if (built.unreadable) unreadableCount += 1;
         return built.row;
       });
 
-      onImport(parsed, selectedSheet, unreadableCount);
+      onImport(parsed, selectedSheet, unreadableCount, truncated);
     } catch (error) {
       console.error('Import error:', error);
       alert('Error importing data: ' + error.message);
@@ -329,25 +354,7 @@ function ForestPlotGenerator() {
       data: [
         { id: 1, variable: 'Variable 1', or: 1.5, lowerCI: 1.2, upperCI: 1.9, pValue: 0.001, sampleSize: '', group: '', color: 'auto', position: 1 }
       ],
-      settings: {
-        scale: 'linear',
-        font: 'Arial',
-        fontSize: 14,
-        groupTitleFontSize: 16,
-        showGridlines: false,
-        metaAnalysis: false,
-        showPValues: false,
-        alignVariablesLeft: false,
-        title: 'Forest Plot', // Subtitle for this plot
-        footnote: 'Error bars represent 95% confidence intervals',
-        groupSpacing: 30,
-        spacingBeforeGroupTitle: 20,
-        spacingAfterGroupTitle: 5,
-        xAxisMode: 'auto',
-        xAxisMin: '',
-        xAxisMax: '',
-        xAxisTicks: ''
-      }
+      settings: { ...DEFAULT_PLOT_SETTINGS }
     }
   ]);
 
@@ -359,8 +366,8 @@ function ForestPlotGenerator() {
   // A field being cleared for retyping holds '', so every geometry consumer
   // reads these instead of the raw setting: NaN anywhere in the SVG blanks the
   // entire plot.
-  const plotWidthPx = toNumber(globalSettings.plotWidth, 800);
-  const plotHeightPx = toNumber(globalSettings.plotHeight, 600);
+  const plotWidthPx = toNumber(globalSettings.plotWidth, 800, 1);
+  const plotHeightPx = toNumber(globalSettings.plotHeight, 600, 1);
 
   // Helper to get active plot
   const activePlot = plots.find(p => p.id === activePlotId) || plots[0];
@@ -390,7 +397,7 @@ function ForestPlotGenerator() {
       data: [
         { id: 1, variable: 'Variable 1', or: 1.0, lowerCI: 0.8, upperCI: 1.2, pValue: 0.5, sampleSize: '', group: '', color: 'auto', position: 1 }
       ],
-      settings: { ...plots[0].settings, title: `Plot ${newId}` }
+      settings: { ...DEFAULT_PLOT_SETTINGS, ...plots[0].settings, title: `Plot ${newId}` }
     };
     setPlots([...plots, newPlot]);
     setActivePlotId(newId);
@@ -452,13 +459,17 @@ function ForestPlotGenerator() {
     updateActivePlot({ data: newData });
   };
 
-  const handleExcelImport = (parsed, sheetName, unreadableCount = 0) => {
+  const handleExcelImport = (parsed, sheetName, unreadableCount = 0, truncated = false) => {
     updateActivePlot({ data: parsed });
     if (excelData && window.xlsxBridge) window.xlsxBridge.close(excelData.handle);
     setShowExcelImport(false);
     setExcelData(null);
     alert(
       `Imported ${parsed.length} rows from ${sheetName}.` +
+      (truncated
+        ? '\n\nThe requested range was larger than the sheet, so only the part ' +
+          'containing data was read.'
+        : '') +
       (unreadableCount > 0
         ? `\n\n${unreadableCount} row(s) had values that could not be read; ` +
           'those fields were left empty and will not be plotted.'
@@ -540,6 +551,14 @@ function ForestPlotGenerator() {
 
   // Generate smart tick marks based on data range
   const generateSmartTicks = (minVal, maxVal, scale) => {
+    // A non-finite bound used to spin the loop below forever, freezing the app
+    // with no way back: Math.pow(10, power) saturates at Infinity and
+    // Infinity <= Infinity never ends the loop. Validation rejects such input
+    // before we get here, but the loop is also made structurally finite so no
+    // future caller can wedge it.
+    if (!Number.isFinite(minVal) || !Number.isFinite(maxVal)) return [];
+    const MAX_TICKS = 1000;
+
     if (scale === 'log') {
       // For log scale, use powers and half-powers
       const logMin = Math.log10(minVal);
@@ -547,7 +566,7 @@ function ForestPlotGenerator() {
 
       // Generate major ticks at powers of 10
       let power = Math.floor(logMin);
-      while (Math.pow(10, power) <= maxVal * 1.1) {
+      while (Math.pow(10, power) <= maxVal * 1.1 && ticks.length < MAX_TICKS) {
         const val = Math.pow(10, power);
         if (val >= minVal * 0.9) {
           ticks.push(val);
@@ -583,9 +602,14 @@ function ForestPlotGenerator() {
       else if (normalized < 7) step = 1 * magnitude;
       else step = 2 * magnitude;
 
+      // A zero or non-finite step would never advance the loop below. That is
+      // reachable from a zero range: Math.log10(0) is -Infinity, so magnitude
+      // and therefore step come out as 0.
+      if (!Number.isFinite(step) || step <= 0) return [minVal, maxVal];
+
       const ticks = [];
       let tick = Math.ceil(minVal / step) * step;
-      while (tick <= maxVal) {
+      while (tick <= maxVal && ticks.length < MAX_TICKS) {
         ticks.push(tick);
         tick += step;
       }
@@ -692,7 +716,11 @@ function ForestPlotGenerator() {
         const validated = validateProject(project);
 
         if (validated.kind === 'current') {
-          setPlots(validated.plots);
+          // Fill in any setting the saving version did not know about.
+          setPlots(validated.plots.map((plot) => ({
+            ...plot,
+            settings: { ...DEFAULT_PLOT_SETTINGS, ...plot.settings }
+          })));
           if (validated.globalSettings) {
             setGlobalSettings(validated.globalSettings);
           }
@@ -705,7 +733,7 @@ function ForestPlotGenerator() {
           }));
 
           const legacySettings = validated.settings;
-          const newSettings = { ...plots[0].settings, ...legacySettings };
+          const newSettings = { ...DEFAULT_PLOT_SETTINGS, ...legacySettings };
 
           const newGlobalSettings = {
             mainTitle: legacySettings.title || 'Forest Plot',
@@ -729,6 +757,8 @@ function ForestPlotGenerator() {
       }
     };
     reader.readAsText(file);
+    // Allow the same file to be picked again, e.g. after a rejected load.
+    e.target.value = '';
   };
 
   // Format p-value to match user input exactly (no unnecessary trailing zeros)
@@ -780,11 +810,11 @@ function ForestPlotGenerator() {
     // Same reasoning as the plot dimensions: any of these can be '' mid-edit.
     plotSettings = {
       ...plotSettings,
-      fontSize: toNumber(plotSettings.fontSize, 14),
-      groupTitleFontSize: toNumber(plotSettings.groupTitleFontSize, 16),
-      groupSpacing: toNumber(plotSettings.groupSpacing, 30),
-      spacingBeforeGroupTitle: toNumber(plotSettings.spacingBeforeGroupTitle, 20),
-      spacingAfterGroupTitle: toNumber(plotSettings.spacingAfterGroupTitle, 5)
+      fontSize: toNumber(plotSettings.fontSize, 14, 1),
+      groupTitleFontSize: toNumber(plotSettings.groupTitleFontSize, 16, 1),
+      groupSpacing: toNumber(plotSettings.groupSpacing, 30, 0),
+      spacingBeforeGroupTitle: toNumber(plotSettings.spacingBeforeGroupTitle, 20, 0),
+      spacingAfterGroupTitle: toNumber(plotSettings.spacingAfterGroupTitle, 5, 0)
     };
 
     // CRASH FIX v2.2.3: Validate manual X-axis settings before rendering
@@ -793,17 +823,17 @@ function ForestPlotGenerator() {
       const maxVal = parseFloat(plotSettings.xAxisMax);
 
       // Check if values are valid numbers
-      if (plotSettings.xAxisMin !== '' && isNaN(minVal)) {
+      if (plotSettings.xAxisMin !== '' && !Number.isFinite(minVal)) {
         return renderPlotErrorCard('Invalid X-Axis Configuration', [
-          'Minimum value must be a valid number.',
+          'Minimum value must be a finite number.',
           'Please check your X-Axis settings.'
         ]);
       }
 
-      if (plotSettings.xAxisMax !== '' && isNaN(maxVal)) {
+      if (plotSettings.xAxisMax !== '' && !Number.isFinite(maxVal)) {
         return renderPlotErrorCard('Invalid X-Axis Configuration', [
-          'Maximum value must be a valid number.',
-          'Please check your X-Axis settings.'
+          'Maximum value must be a finite number.',
+          'Values such as 1e400 overflow to Infinity.'
         ]);
       }
 
@@ -901,6 +931,11 @@ function ForestPlotGenerator() {
         }
       }
 
+      // Every drawn x goes through this first: an estimate or a limit outside the
+      // axis must be pinned to the edge, never scaled past it and painted over
+      // the label columns.
+      const clampToAxis = (val) => Math.min(Math.max(val, minVal), maxVal);
+
       const xScale = (val) => {
         const scaled = scaleValue(val, plotSettings.scale);
         const minScaled = scaleValue(minVal, plotSettings.scale);
@@ -910,8 +945,8 @@ function ForestPlotGenerator() {
 
       // Generate tick marks
       let tickValues;
-      if (plotSettings.xAxisMode === 'manual' && plotSettings.xAxisTicks !== '') {
-        tickValues = plotSettings.xAxisTicks.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v) && v >= minVal && v <= maxVal);
+      if (plotSettings.xAxisMode === 'manual' && plotSettings.xAxisTicks) {
+        tickValues = String(plotSettings.xAxisTicks).split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v) && v >= minVal && v <= maxVal);
       } else {
         tickValues = generateSmartTicks(minVal, maxVal, plotSettings.scale);
       }
@@ -1068,9 +1103,12 @@ function ForestPlotGenerator() {
             // clamped end gets an arrowhead instead of a cap.
             const lowerClamped = row.lowerCI < minVal;
             const upperClamped = row.upperCI > maxVal;
-            const x1 = xScale(Math.max(row.lowerCI, minVal));
-            const x2 = xScale(Math.min(row.upperCI, maxVal));
-            const xCenter = xScale(row.or);
+            // Both ends clamp into the axis, not just against their own limit:
+            // an interval lying entirely off-scale otherwise produced x1 > x2
+            // and drew the bar backwards, outside the plot.
+            const x1 = xScale(clampToAxis(row.lowerCI));
+            const x2 = xScale(clampToAxis(row.upperCI));
+            const xCenter = xScale(clampToAxis(row.or));
             const orOnScale = row.or >= minVal && row.or <= maxVal;
             const color = getBarColor(row);
             const capOrArrow = (x, clamped, pointsLeft, key) => clamped
@@ -1149,13 +1187,16 @@ function ForestPlotGenerator() {
           const pooledLower = pooled.lowerCI;
           const pooledUpper = pooled.upperCI;
           const y = currentY + baseRowHeight / 2;
-          const xCenter = xScale(pooledOR);
-          // The diamond spans the pooled confidence interval, clamped to the axis.
+          // Same clamping as the study rows: without it a manual axis narrower
+          // than the pooled estimate drew the diamond over the label column.
+          const xCenter = xScale(clampToAxis(pooledOR));
+          const pooledLowerClamped = pooledLower < minVal;
+          const pooledUpperClamped = pooledUpper > maxVal;
           // A very precise pooled estimate can be under a pixel wide, so keep a
           // minimum half-width to leave the marker visible.
           const minHalfWidth = 4;
-          const xLeft = Math.min(xScale(Math.max(pooledLower, minVal)), xCenter - minHalfWidth);
-          const xRight = Math.max(xScale(Math.min(pooledUpper, maxVal)), xCenter + minHalfWidth);
+          const xLeft = Math.min(xScale(clampToAxis(pooledLower)), xCenter - minHalfWidth);
+          const xRight = Math.max(xScale(clampToAxis(pooledUpper)), xCenter + minHalfWidth);
 
           elements.push(
             React.createElement('g', { key: 'pooled-effect' },
@@ -1167,9 +1208,24 @@ function ForestPlotGenerator() {
               }, 'Pooled Effect'),
 
               React.createElement('path', {
+                key: 'pooled-diamond',
                 d: `M ${xLeft} ${y} L ${xCenter} ${y - 8} L ${xRight} ${y} L ${xCenter} ${y + 8} Z`,
                 fill: '#000'
               }),
+
+              // A pooled interval running past the axis gets the same arrowheads
+              // the study rows use, so it is not mistaken for a real bound.
+              pooledLowerClamped ? React.createElement('path', {
+                key: 'pooled-arrow-lower',
+                d: `M ${xLeft} ${y} L ${xLeft + 8} ${y - 5} L ${xLeft + 8} ${y + 5} Z`,
+                fill: '#000'
+              }) : null,
+
+              pooledUpperClamped ? React.createElement('path', {
+                key: 'pooled-arrow-upper',
+                d: `M ${xRight} ${y} L ${xRight - 8} ${y - 5} L ${xRight - 8} ${y + 5} Z`,
+                fill: '#000'
+              }) : null,
 
               React.createElement('text', {
                 x: plotWidthPx - margin.right + 10,

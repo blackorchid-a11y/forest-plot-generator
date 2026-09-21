@@ -119,6 +119,17 @@ test('toNumber falls back rather than propagating NaN', () => {
   assert.strictEqual(toNumber(null, 800), 800);
   assert.strictEqual(toNumber('640', 800), 640);
   assert.strictEqual(toNumber(0, 800), 0);
+  assert.strictEqual(toNumber(Infinity, 800), 800);
+});
+
+test('toNumber rejects values below the given minimum', () => {
+  // A negative width destroys the SVG geometry exactly like an empty one does.
+  assert.strictEqual(toNumber(-100, 800, 1), 800);
+  assert.strictEqual(toNumber(0, 800, 1), 800);
+  assert.strictEqual(toNumber('-5', 14, 1), 14);
+  assert.strictEqual(toNumber(640, 800, 1), 640);
+  // Zero stays legal where zero is meaningful, such as spacing.
+  assert.strictEqual(toNumber(0, 30, 0), 0);
 });
 
 test('formatters round computed values and blank missing p-values', () => {
@@ -142,6 +153,23 @@ test('columns resolve by name even when the file is reordered', () => {
   assert.strictEqual(mapping.upperCI, 'Upper CI');
   assert.strictEqual(mapping.pValue, 'P-value');
   assert.ok(matchedByName.or);
+});
+
+test('meaningful headers never bind an unrelated column to an optional field', () => {
+  // Study/OR/Lower/Upper match by name; Events and Total do not. Falling back
+  // positionally here bound Events to pValue and printed "p=12".
+  const headers = ['Study', 'OR', 'Lower', 'Upper', 'Events', 'Total'];
+  const { mapping } = resolveColumns(headers);
+  assert.strictEqual(mapping.or, 'OR');
+  assert.strictEqual(mapping.lowerCI, 'Lower');
+  assert.strictEqual(mapping.pValue, null);
+  assert.strictEqual(mapping.sampleSize, null);
+  assert.strictEqual(mapping.group, null);
+
+  const { rows } = buildRowsFromRecords(
+    [{ Study: 'A', OR: 1.5, Lower: 1.2, Upper: 1.9, Events: 12, Total: 40 }], headers);
+  assert.strictEqual(rows[0].pValue, null, 'Events leaked into the p-value');
+  assert.strictEqual(rows[0].or, 1.5);
 });
 
 test('unrecognisable headers still map positionally', () => {
