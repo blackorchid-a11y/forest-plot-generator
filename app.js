@@ -366,10 +366,19 @@ function ForestPlotGenerator() {
   const [showExcelImport, setShowExcelImport] = useState(false);
   const [positionDrafts, setPositionDrafts] = useState({});
 
+  // A field being cleared for retyping holds '', so every geometry consumer
+  // reads these instead of the raw setting: NaN anywhere in the SVG blanks the
+  // entire plot.
+  const plotWidthPx = toNumber(globalSettings.plotWidth, 800);
+  const plotHeightPx = toNumber(globalSettings.plotHeight, 600);
+
   // Helper to get active plot
   const activePlot = plots.find(p => p.id === activePlotId) || plots[0];
-  const data = activePlot.data;
-  const settings = activePlot.settings;
+  // plots should never be empty (loadProject validates before committing), but
+  // rendering against an undefined plot would take the whole window down, so
+  // fall back instead of throwing.
+  const data = activePlot ? activePlot.data : [];
+  const settings = activePlot ? activePlot.settings : {};
 
   // Helper to update active plot
   const updateActivePlot = (updates) => {
@@ -626,7 +635,7 @@ function ForestPlotGenerator() {
     const svgElement = svgRef.current;
     if (!svgElement) return;
 
-    // Size the canvas from the rendered SVG itself. globalSettings.plotWidth /
+    // Size the canvas from the rendered SVG itself. plotWidthPx /
     // plotHeight describe a single plot, so using them would crop multi-plot
     // layouts and drop the main title band.
     const width = Number(svgElement.getAttribute('width'));
@@ -695,28 +704,28 @@ function ForestPlotGenerator() {
     reader.onload = (event) => {
       try {
         const project = JSON.parse(event.target.result);
+        // Validate everything BEFORE touching state. The old code committed
+        // setPlots(project.plots) and only then read project.plots[0].id, so a
+        // file with an empty plots array left the app rendering against no
+        // plots at all: a permanent white window.
+        const validated = validateProject(project);
 
-        // Handle new version
-        if (project.version === '2.0' && project.plots) {
-          setPlots(project.plots);
-          if (project.globalSettings) {
-            setGlobalSettings(project.globalSettings);
+        if (validated.kind === 'current') {
+          setPlots(validated.plots);
+          if (validated.globalSettings) {
+            setGlobalSettings(validated.globalSettings);
           }
-          setActivePlotId(project.plots[0].id);
-        }
-        // Handle legacy version
-        else if (project.data) {
+          setActivePlotId(validated.plots[0].id);
+        } else {
           // Add position field if missing (backward compatibility)
-          const dataWithPositions = project.data.map((row, idx) => ({
+          const dataWithPositions = validated.data.map((row, idx) => ({
             ...row,
             position: row.position !== undefined ? row.position : idx + 1
           }));
 
-          // Migrate legacy settings
-          const legacySettings = project.settings || {};
+          const legacySettings = validated.settings;
           const newSettings = { ...plots[0].settings, ...legacySettings };
 
-          // Extract global settings from legacy settings
           const newGlobalSettings = {
             mainTitle: legacySettings.title || 'Forest Plot',
             layout: 'vertical',
@@ -749,8 +758,8 @@ function ForestPlotGenerator() {
   const renderPlotErrorCard = (title, lines, color) => {
     const stroke = color || '#dc2626';
     const fill = stroke === '#dc2626' ? '#fef2f2' : '#fff7ed';
-    const w = globalSettings.plotWidth;
-    const h = globalSettings.plotHeight;
+    const w = plotWidthPx;
+    const h = plotHeightPx;
     const boxHeight = 90 + lines.length * 24;
 
     return React.createElement('g', null,
@@ -787,6 +796,16 @@ function ForestPlotGenerator() {
   };
 
   const renderSinglePlot = (plotData, plotSettings, isSubPlot = false) => {
+    // Same reasoning as the plot dimensions: any of these can be '' mid-edit.
+    plotSettings = {
+      ...plotSettings,
+      fontSize: toNumber(plotSettings.fontSize, 14),
+      groupTitleFontSize: toNumber(plotSettings.groupTitleFontSize, 16),
+      groupSpacing: toNumber(plotSettings.groupSpacing, 30),
+      spacingBeforeGroupTitle: toNumber(plotSettings.spacingBeforeGroupTitle, 20),
+      spacingAfterGroupTitle: toNumber(plotSettings.spacingAfterGroupTitle, 5)
+    };
+
     // CRASH FIX v2.2.3: Validate manual X-axis settings before rendering
     if (plotSettings.xAxisMode === 'manual') {
       const minVal = parseFloat(plotSettings.xAxisMin);
@@ -863,8 +882,8 @@ function ForestPlotGenerator() {
       };
       // Use global width/height if not overridden (though currently we use global for all)
       // But for individual plots in a multi-plot setup, we might want to adjust
-      const plotWidth = globalSettings.plotWidth - margin.left - margin.right;
-      const plotHeight = globalSettings.plotHeight - margin.top - margin.bottom;
+      const plotWidth = plotWidthPx - margin.left - margin.right;
+      const plotHeight = plotHeightPx - margin.top - margin.bottom;
 
       const validData = plotData.filter(d => isValidData(d));
       const allValues = validData.flatMap(d => [d.lowerCI, d.or, d.upperCI]);
@@ -968,7 +987,7 @@ function ForestPlotGenerator() {
       elements.push(
         React.createElement('text', {
           key: 'header-or',
-          x: globalSettings.plotWidth - margin.right + 10,
+          x: plotWidthPx - margin.right + 10,
           y: margin.top - 20,
           textAnchor: 'start',
           fontWeight: 'bold'
@@ -983,7 +1002,7 @@ function ForestPlotGenerator() {
             x1: xScale(1),
             y1: margin.top,
             x2: xScale(1),
-            y2: globalSettings.plotHeight - margin.bottom,
+            y2: plotHeightPx - margin.bottom,
             stroke: '#000',
             strokeWidth: '1.5'
           })
@@ -1000,7 +1019,7 @@ function ForestPlotGenerator() {
                 x1: xScale(val),
                 y1: margin.top,
                 x2: xScale(val),
-                y2: globalSettings.plotHeight - margin.bottom,
+                y2: plotHeightPx - margin.bottom,
                 stroke: '#ddd',
                 strokeWidth: '1',
                 strokeDasharray: '3,3'
@@ -1054,7 +1073,7 @@ function ForestPlotGenerator() {
                 }, row.variable),
 
                 React.createElement('text', {
-                  x: globalSettings.plotWidth - margin.right + 10,
+                  x: plotWidthPx - margin.right + 10,
                   y: y + 5,
                   textAnchor: 'start',
                   fill: '#FF0000',
@@ -1112,7 +1131,7 @@ function ForestPlotGenerator() {
                 }),
 
                 React.createElement('text', {
-                  x: globalSettings.plotWidth - margin.right + 10,
+                  x: plotWidthPx - margin.right + 10,
                   y: y + 5,
                   textAnchor: 'start'
                 }, plotSettings.showPValues ?
@@ -1159,7 +1178,7 @@ function ForestPlotGenerator() {
               }),
 
               React.createElement('text', {
-                x: globalSettings.plotWidth - margin.right + 10,
+                x: plotWidthPx - margin.right + 10,
                 y: y + 5,
                 textAnchor: 'start',
                 fontWeight: 'bold'
@@ -1182,7 +1201,7 @@ function ForestPlotGenerator() {
           React.createElement('text', {
             key: `xaxis-${idx}`,
             x: xScale(val),
-            y: globalSettings.plotHeight - margin.bottom + 20,
+            y: plotHeightPx - margin.bottom + 20,
             textAnchor: 'middle',
             fontSize: plotSettings.fontSize - 2
           }, displayVal)
@@ -1194,7 +1213,7 @@ function ForestPlotGenerator() {
         React.createElement('text', {
           key: 'footnote',
           x: margin.left + plotWidth / 2,
-          y: globalSettings.plotHeight - 20,
+          y: plotHeightPx - 20,
           textAnchor: 'middle',
           fontSize: plotSettings.fontSize - 2,
           fontStyle: 'italic'
@@ -1202,14 +1221,14 @@ function ForestPlotGenerator() {
       );
 
       return React.createElement('svg', {
-        width: globalSettings.plotWidth,
-        height: globalSettings.plotHeight,
+        width: plotWidthPx,
+        height: plotHeightPx,
         style: { fontFamily: plotSettings.font, fontSize: plotSettings.fontSize }
       },
         React.createElement('rect', {
           key: 'background',
-          width: globalSettings.plotWidth,
-          height: globalSettings.plotHeight,
+          width: plotWidthPx,
+          height: plotHeightPx,
           fill: 'white'
         }),
         ...elements
@@ -1227,8 +1246,8 @@ function ForestPlotGenerator() {
 
   const renderAllPlots = () => {
     const isHorizontal = globalSettings.layout === 'horizontal';
-    const totalWidth = isHorizontal ? globalSettings.plotWidth * plots.length : globalSettings.plotWidth;
-    const totalHeight = isHorizontal ? globalSettings.plotHeight : globalSettings.plotHeight * plots.length;
+    const totalWidth = isHorizontal ? plotWidthPx * plots.length : plotWidthPx;
+    const totalHeight = isHorizontal ? plotHeightPx : plotHeightPx * plots.length;
 
     // Main Title Height (if we want a main title above all plots)
     const mainTitleHeight = 50;
@@ -1253,8 +1272,8 @@ function ForestPlotGenerator() {
 
       // Render each plot
       plots.map((plot, index) => {
-        const xOffset = isHorizontal ? index * globalSettings.plotWidth : 0;
-        const yOffset = (isHorizontal ? 0 : index * globalSettings.plotHeight) + mainTitleHeight;
+        const xOffset = isHorizontal ? index * plotWidthPx : 0;
+        const yOffset = (isHorizontal ? 0 : index * plotHeightPx) + mainTitleHeight;
 
         return React.createElement('g', {
           key: plot.id,
@@ -1310,14 +1329,14 @@ function ForestPlotGenerator() {
                 React.createElement('input', {
                   type: 'number',
                   value: globalSettings.plotWidth,
-                  onChange: (e) => setGlobalSettings({ ...globalSettings, plotWidth: parseInt(e.target.value) }),
+                  onChange: (e) => setGlobalSettings({ ...globalSettings, plotWidth: parseNumericInput(e.target.value) }),
                   className: 'w-full px-3 py-2 border rounded',
                   placeholder: 'Width'
                 }),
                 React.createElement('input', {
                   type: 'number',
                   value: globalSettings.plotHeight,
-                  onChange: (e) => setGlobalSettings({ ...globalSettings, plotHeight: parseInt(e.target.value) }),
+                  onChange: (e) => setGlobalSettings({ ...globalSettings, plotHeight: parseNumericInput(e.target.value) }),
                   className: 'w-full px-3 py-2 border rounded',
                   placeholder: 'Height'
                 })
@@ -1444,7 +1463,7 @@ function ForestPlotGenerator() {
                           type: 'number',
                           step: '0.01',
                           value: row.or,
-                          onChange: (e) => updateRow(row.id, 'or', parseFloat(e.target.value)),
+                          onChange: (e) => updateRow(row.id, 'or', parseNumericInput(e.target.value)),
                           className: 'w-full px-2 py-1 border rounded'
                         })
                       ),
@@ -1453,7 +1472,7 @@ function ForestPlotGenerator() {
                           type: 'number',
                           step: '0.01',
                           value: row.lowerCI,
-                          onChange: (e) => updateRow(row.id, 'lowerCI', parseFloat(e.target.value)),
+                          onChange: (e) => updateRow(row.id, 'lowerCI', parseNumericInput(e.target.value)),
                           className: 'w-full px-2 py-1 border rounded'
                         })
                       ),
@@ -1462,7 +1481,7 @@ function ForestPlotGenerator() {
                           type: 'number',
                           step: '0.01',
                           value: row.upperCI,
-                          onChange: (e) => updateRow(row.id, 'upperCI', parseFloat(e.target.value)),
+                          onChange: (e) => updateRow(row.id, 'upperCI', parseNumericInput(e.target.value)),
                           className: 'w-full px-2 py-1 border rounded'
                         })
                       ),
@@ -1471,7 +1490,7 @@ function ForestPlotGenerator() {
                           type: 'number',
                           step: '0.001',
                           value: row.pValue,
-                          onChange: (e) => updateRow(row.id, 'pValue', parseFloat(e.target.value)),
+                          onChange: (e) => updateRow(row.id, 'pValue', parseNumericInput(e.target.value)),
                           className: 'w-full px-2 py-1 border rounded'
                         })
                       ),
@@ -1549,7 +1568,7 @@ function ForestPlotGenerator() {
               React.createElement('input', {
                 type: 'number',
                 value: settings.fontSize,
-                onChange: (e) => updateActiveSettings({ fontSize: parseInt(e.target.value) }),
+                onChange: (e) => updateActiveSettings({ fontSize: parseNumericInput(e.target.value) }),
                 className: 'w-full px-3 py-2 border rounded'
               })
             ),
@@ -1558,7 +1577,7 @@ function ForestPlotGenerator() {
               React.createElement('input', {
                 type: 'number',
                 value: settings.groupTitleFontSize,
-                onChange: (e) => updateActiveSettings({ groupTitleFontSize: parseInt(e.target.value) }),
+                onChange: (e) => updateActiveSettings({ groupTitleFontSize: parseNumericInput(e.target.value) }),
                 className: 'w-full px-3 py-2 border rounded',
                 min: '8',
                 max: '48'
@@ -1581,7 +1600,7 @@ function ForestPlotGenerator() {
               React.createElement('input', {
                 type: 'number',
                 value: settings.groupSpacing,
-                onChange: (e) => updateActiveSettings({ groupSpacing: parseInt(e.target.value) }),
+                onChange: (e) => updateActiveSettings({ groupSpacing: parseNumericInput(e.target.value) }),
                 className: 'w-full px-3 py-2 border rounded bg-gray-100',
                 min: '0',
                 max: '100',
@@ -1593,7 +1612,7 @@ function ForestPlotGenerator() {
               React.createElement('input', {
                 type: 'number',
                 value: settings.spacingBeforeGroupTitle,
-                onChange: (e) => updateActiveSettings({ spacingBeforeGroupTitle: parseInt(e.target.value) }),
+                onChange: (e) => updateActiveSettings({ spacingBeforeGroupTitle: parseNumericInput(e.target.value) }),
                 className: 'w-full px-3 py-2 border rounded',
                 min: '0',
                 max: '100'
@@ -1605,7 +1624,7 @@ function ForestPlotGenerator() {
               React.createElement('input', {
                 type: 'number',
                 value: settings.spacingAfterGroupTitle,
-                onChange: (e) => updateActiveSettings({ spacingAfterGroupTitle: parseInt(e.target.value) }),
+                onChange: (e) => updateActiveSettings({ spacingAfterGroupTitle: parseNumericInput(e.target.value) }),
                 className: 'w-full px-3 py-2 border rounded',
                 min: '-20',
                 max: '100'
@@ -1744,7 +1763,44 @@ function ForestPlotGenerator() {
   );
 }
 
+// A render error used to unmount the whole tree and leave a blank white window
+// with no way back except restarting the app. This keeps the error on screen and
+// offers a reset.
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Unhandled render error:', error, info);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    return React.createElement('div', { className: 'min-h-screen bg-gray-50 p-8' },
+      React.createElement('div', { className: 'max-w-2xl mx-auto bg-white border border-red-300 rounded-lg p-6' },
+        React.createElement('h1', { className: 'text-2xl font-bold text-red-600 mb-3' },
+          'Something went wrong'),
+        React.createElement('p', { className: 'mb-3' },
+          'The plot could not be rendered. Your last action has not been applied.'),
+        React.createElement('p', { className: 'mb-4 text-sm font-mono bg-red-50 p-3 rounded break-words' },
+          String(this.state.error && this.state.error.message)),
+        React.createElement('button', {
+          className: 'px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700',
+          onClick: () => window.location.reload()
+        }, 'Start a blank project')
+      )
+    );
+  }
+}
+
 ReactDOM.render(
-  React.createElement(ForestPlotGenerator),
+  React.createElement(ErrorBoundary, null, React.createElement(ForestPlotGenerator)),
   document.getElementById('root')
 );
