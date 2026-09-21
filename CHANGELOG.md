@@ -5,6 +5,30 @@ All notable changes to the Forest Plot Generator will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **PNG export now works.** It read plot dimensions from the wrong settings object, so the canvas came out zero-sized and "Download PNG (800 DPI)" silently did nothing. Multi-plot figures now export in full instead of being cropped to one plot.
+- **Plot error messages are visible.** The X-axis validation messages were built as HTML inside the `<svg>`, so they rendered nothing: an invalid axis produced a blank preview with no explanation.
+- **Pooled effect is a real meta-analysis.** It averaged the odds ratios and the confidence limits with every study weighted equally. It now uses fixed-effect inverse-variance weighting on the log scale and reports an actual p-value instead of the text `p=pooled`.
+- **The app works offline.** React, Tailwind, PapaParse and Lucide were fetched from CDNs at runtime, so the app showed a blank window without internet access. All libraries are now bundled.
+- **Imports no longer invent numbers.** Unreadable cells became OR 1.0, CI 0.8-1.2, p 0.05. They are now left empty and reported. European decimals (`1,52`) are understood.
+- **CSV columns are matched by name**, so a file whose columns are in a different order no longer imports silently swapped values.
+- **The import range follows the sheet**, instead of a fixed A1:E10 that truncated anything larger.
+- **Malformed project files no longer white-screen the app**; they are validated before anything is loaded, and an error boundary catches anything else.
+- **Clearing a numeric field no longer blanks the plot.**
+- **Confidence intervals that run past the axis are drawn with arrowheads**, so they are no longer indistinguishable from intervals that genuinely end there.
+- **The Position column orders sections too**, and the editing table now shows the same order as the plot.
+- **DevTools no longer opens in shipped builds**, and Ctrl+R (which discards unsaved work) is limited to development.
+- **Edit menu restored**, so Cmd+C/V/X/A/Z and Quit work on macOS.
+
+### Changed
+- **The Excel "first row contains column headers" checkbox now does what it says.** It was inverted: ticking it named the columns `0,1,2,3` and imported the header row as data, while unticking it gave the intended result. If you had learned to untick it, tick it from now on.
+- The renderer runs sandboxed with no Node access; spreadsheet parsing moved to the main process.
+
+### Added
+- Unit tests (`npm test`), an end-to-end smoke test (`npm run test:smoke`) and linting (`npm run lint`), all run in CI before any installer is built.
+
 ## [3.0.2] - 2025-11-20
 
 ### Fixed
