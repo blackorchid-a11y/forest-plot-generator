@@ -742,6 +742,53 @@ function ForestPlotGenerator() {
   };
 
   // Format p-value to match user input exactly (no unnecessary trailing zeros)
+  // Fixed-effect inverse-variance meta-analysis, computed on the log scale.
+  // Averaging odds ratios - and especially averaging the confidence limits -
+  // is not a valid pooled estimate: it discards study precision entirely, so a
+  // 20-patient study would carry the same weight as a 10,000-patient one.
+  const Z_95 = 1.959963985;
+
+  // Upper-tail standard normal probability via Abramowitz & Stegun 7.1.26
+  // (|error| < 1.5e-7, far below the precision we display).
+  const normalUpperTail = (z) => {
+    const x = Math.abs(z) / Math.SQRT2;
+    const t = 1 / (1 + 0.3275911 * x);
+    const erf = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t
+      - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return 0.5 * (1 - erf);
+  };
+
+  const computePooledEffect = (rows) => {
+    const studies = [];
+    rows.forEach((d) => {
+      const or = Number(d.or);
+      const lower = Number(d.lowerCI);
+      const upper = Number(d.upperCI);
+      // Ratios and their limits must be strictly positive for a log transform.
+      if (!(or > 0) || !(lower > 0) || !(upper > 0) || !(upper > lower)) return;
+      const se = (Math.log(upper) - Math.log(lower)) / (2 * Z_95);
+      if (!Number.isFinite(se) || se <= 0) return;
+      studies.push({ logOR: Math.log(or), weight: 1 / (se * se) });
+    });
+
+    if (studies.length === 0) return null;
+    const totalWeight = studies.reduce((sum, st) => sum + st.weight, 0);
+    if (!Number.isFinite(totalWeight) || totalWeight <= 0) return null;
+
+    const pooledLogOR = studies.reduce((sum, st) => sum + st.weight * st.logOR, 0) / totalWeight;
+    const pooledSE = Math.sqrt(1 / totalWeight);
+    if (!Number.isFinite(pooledLogOR) || !Number.isFinite(pooledSE)) return null;
+
+    return {
+      or: Math.exp(pooledLogOR),
+      lowerCI: Math.exp(pooledLogOR - Z_95 * pooledSE),
+      upperCI: Math.exp(pooledLogOR + Z_95 * pooledSE),
+      pValue: 2 * normalUpperTail(pooledLogOR / pooledSE),
+      studyCount: studies.length,
+      excludedCount: rows.length - studies.length
+    };
+  };
+
   const formatPValue = (pValue) => {
     if (pValue < 0.001) return '<0.001';
     // Convert to string and remove trailing zeros after decimal point
@@ -760,6 +807,13 @@ function ForestPlotGenerator() {
     if (!str.includes('.')) return str;
     // Remove trailing zeros
     return str.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+  };
+
+  // Computed estimates (unlike user-typed values) carry full float precision,
+  // so round them for display: 1.100649884255825 -> 1.1.
+  const formatEstimate = (num) => {
+    if (!Number.isFinite(num)) return String(num);
+    return formatNumber(Number(num.toPrecision(3)));
   };
 
   // Error cards render inside the outer <svg>, so they must be built from SVG
@@ -1148,12 +1202,19 @@ function ForestPlotGenerator() {
       // Meta-analysis pooled effect
       if (plotSettings.metaAnalysis) {
         const validDataForMeta = plotData.filter(d => isValidData(d));
-        if (validDataForMeta.length > 0) {
-          const pooledOR = validDataForMeta.reduce((sum, d) => sum + d.or, 0) / validDataForMeta.length;
-          const pooledLower = validDataForMeta.reduce((sum, d) => sum + d.lowerCI, 0) / validDataForMeta.length;
-          const pooledUpper = validDataForMeta.reduce((sum, d) => sum + d.upperCI, 0) / validDataForMeta.length;
+        const pooled = computePooledEffect(validDataForMeta);
+        if (pooled) {
+          const pooledOR = pooled.or;
+          const pooledLower = pooled.lowerCI;
+          const pooledUpper = pooled.upperCI;
           const y = currentY + baseRowHeight / 2;
           const xCenter = xScale(pooledOR);
+          // The diamond spans the pooled confidence interval, clamped to the axis.
+          // A very precise pooled estimate can be under a pixel wide, so keep a
+          // minimum half-width to leave the marker visible.
+          const minHalfWidth = 4;
+          const xLeft = Math.min(xScale(Math.max(pooledLower, minVal)), xCenter - minHalfWidth);
+          const xRight = Math.max(xScale(Math.min(pooledUpper, maxVal)), xCenter + minHalfWidth);
 
           elements.push(
             React.createElement('g', { key: 'pooled-effect' },
@@ -1165,7 +1226,7 @@ function ForestPlotGenerator() {
               }, 'Pooled Effect'),
 
               React.createElement('path', {
-                d: `M ${xCenter} ${y - 8} L ${xCenter + 8} ${y} L ${xCenter} ${y + 8} L ${xCenter - 8} ${y} Z`,
+                d: `M ${xLeft} ${y} L ${xCenter} ${y - 8} L ${xRight} ${y} L ${xCenter} ${y + 8} Z`,
                 fill: '#000'
               }),
 
@@ -1175,8 +1236,8 @@ function ForestPlotGenerator() {
                 textAnchor: 'start',
                 fontWeight: 'bold'
               }, plotSettings.showPValues ?
-                `${formatNumber(pooledOR)} (${formatNumber(pooledLower)}-${formatNumber(pooledUpper)}) p=pooled` :
-                `${formatNumber(pooledOR)} (${formatNumber(pooledLower)}-${formatNumber(pooledUpper)})`
+                `${formatEstimate(pooledOR)} (${formatEstimate(pooledLower)}-${formatEstimate(pooledUpper)}) p=${formatPValue(pooled.pValue)}` :
+                `${formatEstimate(pooledOR)} (${formatEstimate(pooledLower)}-${formatEstimate(pooledUpper)})`
               )
             )
           );
