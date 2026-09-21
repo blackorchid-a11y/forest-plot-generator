@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Forest Plot Generator</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="vendor/tailwind.css">
   <style>
     body { 
       margin: 0; 
@@ -15,17 +15,14 @@
 </head>
 <body>
   <div id="root"></div>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+  <!-- All runtime libraries are bundled locally so the app works with no network access. -->
+  <script src="vendor/react.production.min.js"></script>
+  <script src="vendor/react-dom.production.min.js"></script>
+  <script src="vendor/papaparse.min.js"></script>
   <script>
     // Load XLSX from node_modules instead of CDN
     window.XLSX = require('xlsx');
-    console.log('XLSX loaded from node_modules:', typeof XLSX);
-    console.log('XLSX.read available:', typeof XLSX.read);
-    console.log('XLSX properties:', Object.keys(XLSX).slice(0, 10)); // Show first 10 properties
   </script>
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
