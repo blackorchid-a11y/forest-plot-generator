@@ -1,5 +1,4 @@
 const { useState, useRef, useEffect } = React;
-const { Download, Upload, Plus, Trash2 } = lucide;
 
 // Comprehensive color palette
 const COLOR_PALETTE = [
