@@ -1,5 +1,14 @@
 const { useState, useRef, useEffect } = React;
 
+// Pure logic lives in lib/core.js so it can be unit tested under Node.
+const {
+  computePooledEffect, isSignificant, isValidData, scaleValue,
+  formatNumber, formatEstimate, formatPValue,
+  parseNumericCell, parseNumericInput, toNumber,
+  buildRowsFromRecords, describeMapping, resolveColumns,
+  validateProject, sortRowsByPosition, groupRowsIntoSections
+} = ForestPlotCore;
+
 // Comprehensive color palette
 const COLOR_PALETTE = [
   { name: 'Auto', value: 'auto' },
@@ -343,6 +352,7 @@ function ForestPlotGenerator() {
   const [activePlotId, setActivePlotId] = useState(1);
   const [excelData, setExcelData] = useState(null);
   const [showExcelImport, setShowExcelImport] = useState(false);
+  const [positionDrafts, setPositionDrafts] = useState({});
 
   // Helper to get active plot
   const activePlot = plots.find(p => p.id === activePlotId) || plots[0];
@@ -410,6 +420,20 @@ function ForestPlotGenerator() {
   const deleteRow = (id) => {
     const newData = data.filter(d => d.id !== id);
     updateActivePlot({ data: newData });
+  };
+
+  // Typing a position must not reorder the table mid-keystroke (typing "1" on
+  // the way to "12" would jump the row), so the field is held as a draft and
+  // committed when it loses focus.
+  const commitPosition = (id) => {
+    const draft = positionDrafts[id];
+    const remaining = { ...positionDrafts };
+    delete remaining[id];
+    setPositionDrafts(remaining);
+    if (draft === undefined) return;
+    const parsed = parseNumericInput(draft);
+    if (parsed === '') return;
+    updateRow(id, 'position', parsed);
   };
 
   const updateRow = (id, field, value) => {
@@ -498,53 +522,9 @@ function ForestPlotGenerator() {
     e.target.value = '';
   };
 
-  const isSignificant = (lowerCI, upperCI) => {
-    return !(lowerCI <= 1.0 && upperCI >= 1.0);
-  };
-
-  const isValidData = (row) => {
-    const { or, lowerCI, upperCI } = row;
-    if (isNaN(or) || isNaN(lowerCI) || isNaN(upperCI)) return false;
-    if (or === null || lowerCI === null || upperCI === null) return false;
-    if (or === undefined || lowerCI === undefined || upperCI === undefined) return false;
-    if (or <= 0 || lowerCI <= 0 || upperCI <= 0) return false;
-    if (lowerCI >= upperCI) return false;
-    return true;
-  };
-
   const getBarColor = (row) => {
     if (row.color !== 'auto') return row.color;
     return isSignificant(row.lowerCI, row.upperCI) ? '#000000' : '#808080';
-  };
-
-  const scaleValue = (value, scaleType) => {
-    if (scaleType === 'log') {
-      return Math.log(value);
-    }
-    return value;
-  };
-
-  const groupDataBySections = (currentData) => {
-    const groups = {};
-
-    currentData.forEach(row => {
-      const groupName = row.group || 'Ungrouped';
-      if (!groups[groupName]) {
-        groups[groupName] = [];
-      }
-      groups[groupName].push(row);
-    });
-
-    // Sort rows within each group by position
-    Object.keys(groups).forEach(groupName => {
-      groups[groupName].sort((a, b) => {
-        const posA = a.position !== undefined ? a.position : a.id;
-        const posB = b.position !== undefined ? b.position : b.id;
-        return posA - posB;
-      });
-    });
-
-    return groups;
   };
 
   // Generate smart tick marks based on data range
@@ -742,80 +722,6 @@ function ForestPlotGenerator() {
   };
 
   // Format p-value to match user input exactly (no unnecessary trailing zeros)
-  // Fixed-effect inverse-variance meta-analysis, computed on the log scale.
-  // Averaging odds ratios - and especially averaging the confidence limits -
-  // is not a valid pooled estimate: it discards study precision entirely, so a
-  // 20-patient study would carry the same weight as a 10,000-patient one.
-  const Z_95 = 1.959963985;
-
-  // Upper-tail standard normal probability via Abramowitz & Stegun 7.1.26
-  // (|error| < 1.5e-7, far below the precision we display).
-  const normalUpperTail = (z) => {
-    const x = Math.abs(z) / Math.SQRT2;
-    const t = 1 / (1 + 0.3275911 * x);
-    const erf = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t
-      - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
-    return 0.5 * (1 - erf);
-  };
-
-  const computePooledEffect = (rows) => {
-    const studies = [];
-    rows.forEach((d) => {
-      const or = Number(d.or);
-      const lower = Number(d.lowerCI);
-      const upper = Number(d.upperCI);
-      // Ratios and their limits must be strictly positive for a log transform.
-      if (!(or > 0) || !(lower > 0) || !(upper > 0) || !(upper > lower)) return;
-      const se = (Math.log(upper) - Math.log(lower)) / (2 * Z_95);
-      if (!Number.isFinite(se) || se <= 0) return;
-      studies.push({ logOR: Math.log(or), weight: 1 / (se * se) });
-    });
-
-    if (studies.length === 0) return null;
-    const totalWeight = studies.reduce((sum, st) => sum + st.weight, 0);
-    if (!Number.isFinite(totalWeight) || totalWeight <= 0) return null;
-
-    const pooledLogOR = studies.reduce((sum, st) => sum + st.weight * st.logOR, 0) / totalWeight;
-    const pooledSE = Math.sqrt(1 / totalWeight);
-    if (!Number.isFinite(pooledLogOR) || !Number.isFinite(pooledSE)) return null;
-
-    return {
-      or: Math.exp(pooledLogOR),
-      lowerCI: Math.exp(pooledLogOR - Z_95 * pooledSE),
-      upperCI: Math.exp(pooledLogOR + Z_95 * pooledSE),
-      pValue: 2 * normalUpperTail(pooledLogOR / pooledSE),
-      studyCount: studies.length,
-      excludedCount: rows.length - studies.length
-    };
-  };
-
-  const formatPValue = (pValue) => {
-    if (pValue < 0.001) return '<0.001';
-    // Convert to string and remove trailing zeros after decimal point
-    const str = pValue.toString();
-    // If it's already in the format we want, return it
-    if (!str.includes('.')) return str;
-    // Remove trailing zeros
-    return str.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
-  };
-
-  // Format OR/CI values to match user input exactly (no unnecessary trailing zeros)
-  const formatNumber = (num) => {
-    // Convert to string and remove trailing zeros after decimal point
-    const str = num.toString();
-    // If it's already in the format we want, return it
-    if (!str.includes('.')) return str;
-    // Remove trailing zeros
-    return str.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
-  };
-
-  // Computed estimates (unlike user-typed values) carry full float precision,
-  // so round them for display: 1.100649884255825 -> 1.1.
-  const formatEstimate = (num) => {
-    if (!Number.isFinite(num)) return String(num);
-    return formatNumber(Number(num.toPrecision(3)));
-  };
-
   // Error cards render inside the outer <svg>, so they must be built from SVG
   // elements: HTML tags created in that subtree land in the SVG namespace and
   // paint nothing at all. Native <text> also keeps the message visible in PNG
@@ -990,9 +896,10 @@ function ForestPlotGenerator() {
         tickValues = generateSmartTicks(minVal, maxVal, plotSettings.scale);
       }
 
-      // Group data into sections
-      const groupedData = groupDataBySections(plotData);
-      const groupNames = Object.keys(groupedData);
+      // Sections and the rows inside them are both ordered by the Position
+      // column, so a section moves as a unit when its positions change.
+      const sections = groupRowsIntoSections(plotData);
+      const groupNames = sections.map(section => section.name);
 
       // Calculate total data rows (excluding section headers)
       let totalDataRows = plotData.length;
@@ -1084,8 +991,9 @@ function ForestPlotGenerator() {
       }
 
       // Render each group/section
-      groupNames.forEach((groupName, groupIdx) => {
-        const groupRows = groupedData[groupName];
+      sections.forEach((section, groupIdx) => {
+        const groupName = section.name;
+        const groupRows = section.rows;
 
         // Section header
         if (groupName && groupName !== 'Ungrouped' && groupName.trim() !== '') {
@@ -1488,13 +1396,17 @@ function ForestPlotGenerator() {
                   )
                 ),
                 React.createElement('tbody', null,
-                  data.map(row =>
+                  sortRowsByPosition(data).map(row =>
                     React.createElement('tr', { key: row.id },
                       React.createElement('td', { className: 'border p-2' },
                         React.createElement('input', {
                           type: 'number',
-                          value: row.position !== undefined ? row.position : row.id,
-                          onChange: (e) => updateRow(row.id, 'position', parseInt(e.target.value)),
+                          value: positionDrafts[row.id] !== undefined
+                            ? positionDrafts[row.id]
+                            : (row.position !== undefined ? row.position : row.id),
+                          onChange: (e) => setPositionDrafts({ ...positionDrafts, [row.id]: e.target.value }),
+                          onBlur: () => commitPosition(row.id),
+                          onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur(); },
                           className: 'w-20 px-2 py-1 border rounded text-center',
                           min: '1'
                         })
