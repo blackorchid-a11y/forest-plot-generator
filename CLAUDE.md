@@ -5,22 +5,28 @@ This is an Electron desktop application that generates professional forest plots
 
 ## Tech Stack
 - **Electron** v28.0.0 - Desktop app framework
-- **React** 18 (via CDN) - UI framework
-- **Tailwind CSS** (via CDN) - Styling
-- **PapaCSV** - CSV parsing
-- **SheetJS (XLSX)** - Excel file processing
-- **Lucide React** - Icons
+- **React** 18 - UI framework (bundled in `vendor/`, not a CDN)
+- **Tailwind CSS** - Styling (a static stylesheet built by the CLI into `vendor/tailwind.css`)
+- **PapaParse** - CSV parsing (bundled in `vendor/`)
+- **SheetJS (XLSX)** - Excel parsing, in the main process only
+
+All runtime libraries are bundled locally so the app works with no network
+access. Nothing is fetched from a CDN at runtime; do not reintroduce one.
 
 ## Project Structure
 ```
 forest-plot-app/
-├── main.js           # Electron main process
-├── index.html        # HTML entry point
-├── app.js            # React application code
+├── main.js           # Electron main process + spreadsheet IPC handlers
+├── preload.js        # contextBridge: the renderer's only privileged API
+├── index.html        # HTML entry point (loads vendor/ and lib/ scripts)
+├── app.js            # React application code (renderer, no Node access)
+├── lib/core.js       # Pure logic: statistics, formatting, parsing, validation
+├── vendor/           # Bundled React, ReactDOM, PapaParse, Tailwind CSS
+├── test/unit/        # node --test unit tests for lib/core.js
+├── e2e/              # Electron smoke test (drives the real app)
 ├── package.json      # Dependencies and build config
-├── .gitignore        # Git ignore rules
-├── dist/             # Build output directory
-└── .github/workflows/build.yml  # GitHub Actions CI
+├── dist/             # Build output directory (ignored)
+└── .github/workflows/build.yml  # CI: lint + tests, then builds
 ```
 
 ## Key Files
@@ -32,20 +38,35 @@ forest-plot-app/
 ## Build Commands
 ```bash
 npm start              # Run app in development mode
+npm test               # Unit tests (fast, no display needed)
+npm run test:smoke     # End-to-end test against the real app (needs a display)
+npm run lint           # ESLint
+npm run build-css      # Regenerate vendor/tailwind.css after changing classes
 npm run build          # Build Windows executable (x64)
 npm run build-mac      # Build macOS DMG
 ```
+On a headless machine, run the smoke test under a virtual display:
+`xvfb-run -a npm run test:smoke`
 
 ## Development Workflow
 
 ### Making Changes
-1. Most UI/logic changes go in `app.js`
-2. Electron configuration changes go in `main.js`
-3. HTML structure changes go in `index.html`
-4. Build config changes go in `package.json`
+1. Most UI changes go in `app.js`
+2. Pure logic (statistics, formatting, parsing, validation) goes in `lib/core.js`
+   so it can be unit tested; `app.js` reads it from the `ForestPlotCore` global
+3. Electron configuration and spreadsheet IPC go in `main.js`
+4. Anything the renderer needs from Node must be exposed in `preload.js`
+5. HTML structure changes go in `index.html`
+6. Build config changes go in `package.json`
+
+If you add Tailwind classes, run `npm run build-css` -- the stylesheet is
+generated from the classes it finds in `index.html` and `app.js`.
 
 ### Testing Changes
-- Run `npm start` to test in development
+- `npm run lint && npm test` before anything else
+- `npm run test:smoke` for changes touching rendering, export, imports or the
+  Electron configuration
+- Run `npm start` to check it by hand
 - Test the built executable after running `npm run build`
 
 ### Git Workflow
@@ -75,10 +96,15 @@ npm install
 - **Icons**: Lucide React icons via createIcon() pattern
 
 ## Important Notes
-- The app uses `nodeIntegration: true` and `contextIsolation: false` in Electron for direct Node.js access
-- All external libraries are loaded via CDN in index.html
-- The window starts maximized with no menu bar
-- Build artifacts go to `dist/` directory
+- The renderer is sandboxed: `contextIsolation: true`, `nodeIntegration: false`.
+  It has no `require`, `process` or `Buffer`. Anything privileged goes through
+  the `xlsxBridge` in `preload.js`, backed by IPC handlers in `main.js`
+- `index.html` declares a CSP; inline `<script>` will not run
+- All external libraries are bundled in `vendor/`
+- The window starts maximized with the menu bar hidden (the menu is still set,
+  for its keyboard accelerators)
+- DevTools and reload are development-only, gated on `app.isPackaged`
+- Build artifacts go to `dist/`; do not commit installers
 
 ## Common Tasks
 
