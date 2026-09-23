@@ -11,6 +11,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { pathToFileURL } = require('node:url');
 const { _electron: electron } = require('playwright');
 const XLSX = require('xlsx');
 
@@ -354,6 +355,33 @@ test('clearing a numeric field does not blank the plot', async () => {
   await win.waitForTimeout(800);
   const width = await win.evaluate(() => document.querySelector('svg').getAttribute('width'));
   assert.strictEqual(width, '640');
+});
+
+test('the window cannot be navigated away from the app', async () => {
+  // Dropping a file outside an input used to navigate the window to it,
+  // replacing the app and discarding every unsaved plot.
+  const target = pathToFileURL(path.join(fixtureDir, 'swapped.csv')).href;
+  await win.evaluate((url) => { window.__stillHere = true; window.location.href = url; }, target);
+  await win.waitForTimeout(1500);
+  assert.ok(win.url().endsWith('/index.html'), `the window moved to ${win.url()}`);
+  assert.strictEqual(await win.evaluate(() => window.__stillHere), true);
+
+  await win.evaluate(() => { window.open('file:///'); });
+  await win.waitForTimeout(800);
+  assert.strictEqual(app.windows().filter((w) => w.url().startsWith('file:')).length, 1,
+    'a second window was opened');
+});
+
+// Runs last among the UI tests: it resets the page.
+test('reloading, the crash screen\'s way out, still works', async () => {
+  await win.evaluate(() => { window.__beforeReload = true; window.location.reload(); });
+  await win.waitForTimeout(2500);
+  const state = await win.evaluate(() => ({
+    marker: window.__beforeReload,
+    heading: (document.querySelector('h1') || {}).textContent
+  }));
+  assert.strictEqual(state.marker, undefined, 'the page did not reload');
+  assert.strictEqual(state.heading, 'Forest Plot Generator');
 });
 
 test('nothing logged an unexpected error along the way', () => {

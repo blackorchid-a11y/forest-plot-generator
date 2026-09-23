@@ -170,6 +170,16 @@ function createWindow() {
   });
   win.on('closed', () => releaseFor(webContentsId));
 
+  // The window only ever shows the app. Dropping a file anywhere outside an
+  // input made Chromium navigate to that file, replacing the app and throwing
+  // away every unsaved plot (there is no autosave). location.reload() does go
+  // through will-navigate, and the crash screen relies on it, so a navigation
+  // to the page already showing is let through.
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url !== win.webContents.getURL()) event.preventDefault();
+  });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
   win.loadFile('index.html');
   win.maximize();
 
