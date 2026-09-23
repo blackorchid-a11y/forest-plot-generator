@@ -62,6 +62,23 @@ function writeFixtures() {
     }]
   }));
 
+  // Every estimate close to 1, inside a section: the axis used to label 0.95
+  // as "1.0" beside the real 1.0.
+  fs.writeFileSync(path.join(fixtureDir, 'near-one.json'), JSON.stringify({
+    version: '2.0',
+    globalSettings: { mainTitle: 'Near one', layout: 'vertical', plotWidth: 800, plotHeight: 600 },
+    plots: [{
+      id: 1,
+      title: 'Plot 1',
+      data: [
+        { id: 1, variable: 'Row A', or: 0.97, lowerCI: 0.95, upperCI: 0.99, group: 'Section', color: 'auto', position: 1 },
+        { id: 2, variable: 'Row B', or: 1.0, lowerCI: 0.97, upperCI: 1.03, group: 'Section', color: 'auto', position: 2 },
+        { id: 3, variable: 'Row C', or: 1.03, lowerCI: 1.01, upperCI: 1.05, group: 'Section', color: 'auto', position: 3 }
+      ],
+      settings: {}
+    }]
+  }));
+
   fs.writeFileSync(path.join(fixtureDir, 'empty-plots.json'),
     JSON.stringify({ version: '2.0', plots: [] }));
 
@@ -442,6 +459,66 @@ test('clearing a numeric field does not blank the plot', async () => {
   await win.waitForTimeout(800);
   const width = await win.evaluate(() => document.querySelector('svg').getAttribute('width'));
   assert.strictEqual(width, '640');
+});
+
+test('random effects shows its model and the heterogeneity line', async () => {
+  // Two precise but contradictory studies: the random-effects interval
+  // (about 0.07-15) runs far past every study's, and past an automatic axis
+  // sized from the study rows alone (0-6).
+  const setRow = async (index, values) => {
+    const cells = win.locator('tbody tr').nth(index).locator('input');
+    for (const [cell, value] of Object.entries(values)) await cells.nth(Number(cell)).fill(value);
+  };
+  await setRow(0, { 2: '4', 3: '3.6', 4: '4.4' });
+  await setRow(1, { 2: '0.25', 3: '0.22', 4: '0.28' });
+  await win.waitForTimeout(400);
+
+  await win.locator('label').filter({ hasText: 'Meta-analysis Mode' }).locator('input').check();
+  await win.waitForTimeout(600);
+  const texts = () => win.evaluate(() =>
+    [...document.querySelectorAll('svg text')].map((t) => t.textContent));
+
+  let shown = await texts();
+  assert.ok(shown.includes('Fixed-effect model'), JSON.stringify(shown));
+  assert.ok(shown.some((t) => /^Heterogeneity: I\u00b2 = \d+%; p/.test(t)), JSON.stringify(shown));
+
+  await win.locator('select').filter({ hasText: 'Random effects' }).selectOption('random');
+  await win.waitForTimeout(600);
+  shown = await texts();
+  assert.ok(shown.includes('Random-effects model'), JSON.stringify(shown));
+  assert.ok(shown.some((t) => /^Heterogeneity: \u03c4\u00b2 = [\d.]+; I\u00b2 = \d+%/.test(t)),
+    JSON.stringify(shown));
+
+  // The pooled interval must stay on the automatic axis: no arrowheads.
+  const arrows = await win.evaluate(() =>
+    [...document.querySelectorAll('svg g path')].filter((p) => /Z$/.test(p.getAttribute('d')) &&
+      p.getAttribute('d').split('L').length === 3).length);
+  assert.strictEqual(arrows, 0, 'something ran off the automatic axis');
+
+  await win.locator('label').filter({ hasText: 'Meta-analysis Mode' }).locator('input').uncheck();
+  await win.waitForTimeout(400);
+});
+
+test('axis labels around 1 are distinct, and negative section spacing tightens', async () => {
+  await win.locator('input[accept=".json"]').setInputFiles(path.join(fixtureDir, 'near-one.json'));
+  await win.waitForTimeout(1500);
+
+  const tickLabels = await win.evaluate(() => [...document.querySelectorAll('svg text')]
+    .map((t) => t.textContent).filter((t) => /^\d+(\.\d+)?$/.test(t)));
+  assert.ok(tickLabels.length >= 3, `ticks: ${JSON.stringify(tickLabels)}`);
+  assert.strictEqual(new Set(tickLabels).size, tickLabels.length, `ticks: ${JSON.stringify(tickLabels)}`);
+  assert.ok(tickLabels.includes('1'), `ticks: ${JSON.stringify(tickLabels)}`);
+
+  const rowAY = () => win.evaluate(() => Number([...document.querySelectorAll('svg text')]
+    .find((t) => t.textContent === 'Row A').getAttribute('y')));
+  const spacing = win.locator('label:has-text("Space After Section Title") + input');
+  await spacing.fill('0');
+  await win.waitForTimeout(500);
+  const atZero = await rowAY();
+  await spacing.fill('-10');
+  await win.waitForTimeout(500);
+  const atMinusTen = await rowAY();
+  assert.ok(atMinusTen < atZero, `row A at ${atMinusTen} with -10 vs ${atZero} with 0`);
 });
 
 test('the window cannot be navigated away from the app', async () => {

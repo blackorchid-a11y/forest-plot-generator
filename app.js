@@ -2,7 +2,7 @@ const { useState, useRef, useEffect } = React;
 
 // Pure logic lives in lib/core.js so it can be unit tested under Node.
 const {
-  computePooledEffect, isSignificant, isValidData, scaleValue,
+  computePooledEffect, describeHeterogeneity, poolingModelLabel, isSignificant, isValidData, scaleValue,
   computeAutoAxis, generateSmartTicks, formatTickLabel,
   formatNumber, formatEstimate, formatPValue,
   parseNumericInput, toNumber,
@@ -21,6 +21,7 @@ const DEFAULT_PLOT_SETTINGS = {
   groupTitleFontSize: 16,
   showGridlines: false,
   metaAnalysis: false,
+  poolingModel: 'fixed', // 'fixed' or 'random' (DerSimonian-Laird)
   showPValues: false,
   alignVariablesLeft: false,
   title: 'Forest Plot', // Subtitle for this plot
@@ -602,11 +603,13 @@ function ForestPlotGenerator() {
     e.target.value = '';
   };
 
-  // " p=0.03" when p-values are shown and the row has one; a row without a
-  // p-value used to end in a dangling "p=".
+  // " p=0.03" (or " p<0.001") when p-values are shown and the row has one; a
+  // row without a p-value used to end in a dangling "p=", and a tiny one read
+  // "p=<0.001".
   const pValueSuffixFor = (showPValues) => (pValue) => {
     const text = formatPValue(pValue);
-    return showPValues && text ? ` p=${text}` : '';
+    if (!showPValues || !text) return '';
+    return text.startsWith('<') ? ` p${text}` : ` p=${text}`;
   };
 
   const getBarColor = (row) => {
@@ -877,7 +880,16 @@ function ForestPlotGenerator() {
       const pValueSuffix = pValueSuffixFor(plotSettings.showPValues);
 
       const validData = plotData.filter(d => isValidData(d));
+      // The pooled estimate is needed up front: a random-effects interval can
+      // be wider than every study's, so the automatic axis must include it, and
+      // its heterogeneity line takes a row slot of its own.
+      const pooled = plotSettings.metaAnalysis
+        ? computePooledEffect(validData, plotSettings.poolingModel === 'random' ? 'random' : 'fixed')
+        : null;
+      const heterogeneityText = describeHeterogeneity(pooled);
+
       const allValues = validData.flatMap(d => [d.lowerCI, d.or, d.upperCI]);
+      if (pooled) allValues.push(pooled.lowerCI, pooled.upperCI);
 
       // Determine X-axis range
       let minVal, maxVal;
@@ -917,6 +929,7 @@ function ForestPlotGenerator() {
       // Calculate total data rows (excluding section headers)
       let totalDataRows = plotData.length;
       if (plotSettings.metaAnalysis) totalDataRows += 1;
+      if (heterogeneityText) totalDataRows += 1;
 
       // Calculate total height used by headers and spacing
       let totalHeaderHeight = 0;
@@ -1138,8 +1151,6 @@ function ForestPlotGenerator() {
 
       // Meta-analysis pooled effect
       if (plotSettings.metaAnalysis) {
-        const validDataForMeta = plotData.filter(d => isValidData(d));
-        const pooled = computePooledEffect(validDataForMeta);
         if (pooled) {
           const pooledOR = pooled.or;
           const pooledLower = pooled.lowerCI;
@@ -1163,7 +1174,7 @@ function ForestPlotGenerator() {
                 y: y + 5,
                 textAnchor: plotSettings.alignVariablesLeft ? 'start' : 'end',
                 fontWeight: 'bold'
-              }, 'Pooled Effect'),
+              }, poolingModelLabel(pooled.model)),
 
               React.createElement('path', {
                 key: 'pooled-diamond',
@@ -1190,10 +1201,20 @@ function ForestPlotGenerator() {
                 y: y + 5,
                 textAnchor: 'start',
                 fontWeight: 'bold'
-              }, plotSettings.showPValues ?
-                `${formatEstimate(pooledOR)} (${formatEstimate(pooledLower)}-${formatEstimate(pooledUpper)}) p=${formatPValue(pooled.pValue)}` :
-                `${formatEstimate(pooledOR)} (${formatEstimate(pooledLower)}-${formatEstimate(pooledUpper)})`
-              )
+              }, `${formatEstimate(pooledOR)} (${formatEstimate(pooledLower)}-${formatEstimate(pooledUpper)})` +
+                pValueSuffix(pooled.pValue)
+              ),
+
+              // Starts at the left edge and runs under the empty plot area: it is
+              // too long for the label column.
+              heterogeneityText ? React.createElement('text', {
+                key: 'heterogeneity',
+                x: 10,
+                y: y + baseRowHeight + 5,
+                textAnchor: 'start',
+                fontSize: smallFontSize,
+                fontStyle: 'italic'
+              }, heterogeneityText) : null
             )
           );
         }
@@ -1651,6 +1672,17 @@ function ForestPlotGenerator() {
                   onChange: (e) => updateActiveSettings({ metaAnalysis: e.target.checked })
                 }),
                 React.createElement('span', { className: 'font-semibold' }, 'Meta-analysis Mode')
+              ),
+              settings.metaAnalysis && React.createElement('label', { className: 'flex items-center gap-2 mt-2 ml-6' },
+                React.createElement('span', null, 'Model'),
+                React.createElement('select', {
+                  value: settings.poolingModel,
+                  onChange: (e) => updateActiveSettings({ poolingModel: e.target.value }),
+                  className: 'px-2 py-1 border rounded'
+                },
+                  React.createElement('option', { value: 'fixed' }, 'Fixed effect (inverse variance)'),
+                  React.createElement('option', { value: 'random' }, 'Random effects (DerSimonian-Laird)')
+                )
               ),
               React.createElement('label', { className: 'flex items-center gap-2 mt-2' },
                 React.createElement('input', {

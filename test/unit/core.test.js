@@ -398,3 +398,76 @@ test('settings of the wrong kind fall back to their defaults', () => {
   assert.strictEqual(normalizeSettings({ fontSize: '12' }, defaults).fontSize, '12');
   assert.deepStrictEqual(normalizeSettings(null, defaults), defaults);
 });
+
+// ------------------------------------------------------ random effects, I^2
+
+const { chiSquareUpperTail, describeHeterogeneity, Z_95 } = core;
+
+// A study with a given log-ratio and standard error, as its OR and 95% CI.
+const studyFrom = (logOR, se) => ({
+  or: Math.exp(logOR),
+  lowerCI: Math.exp(logOR - Z_95 * se),
+  upperCI: Math.exp(logOR + Z_95 * se)
+});
+
+test('chi-square upper tail matches standard table values', () => {
+  assert.ok(Math.abs(chiSquareUpperTail(3.841459, 1) - 0.05) < 1e-6);
+  assert.ok(Math.abs(chiSquareUpperTail(6.634897, 1) - 0.01) < 1e-6);
+  assert.ok(Math.abs(chiSquareUpperTail(18.307038, 10) - 0.05) < 1e-6);
+  assert.ok(Math.abs(chiSquareUpperTail(0.5, 3) - 0.9188914) < 1e-6);
+  assert.strictEqual(chiSquareUpperTail(0, 4), 1);
+  assert.ok(Number.isNaN(chiSquareUpperTail(1, 0)));
+});
+
+test('random effects matches a hand-worked DerSimonian-Laird example', () => {
+  // y = ln 2 (se 0.2) and ln 0.8 (se 0.25). By hand: fixed weights 25 and 16,
+  // pooled 0.33557, Q = 8.1911, C = 19.512, tau^2 = 0.36854, I^2 = 0.87792,
+  // random weights 2.4479 and 2.3201, pooled 0.24728 with SE 0.45798.
+  const rows = [studyFrom(Math.log(2), 0.2), studyFrom(Math.log(0.8), 0.25)];
+  const fixed = computePooledEffect(rows, 'fixed');
+  const random = computePooledEffect(rows, 'random');
+
+  assert.ok(Math.abs(Math.log(fixed.or) - 0.33557) < 1e-4);
+  assert.ok(Math.abs(fixed.heterogeneity.q - 8.1911) < 1e-3);
+  assert.strictEqual(fixed.heterogeneity.df, 1);
+  assert.ok(Math.abs(fixed.heterogeneity.tau2 - 0.36854) < 1e-4);
+  assert.ok(Math.abs(fixed.heterogeneity.i2 - 0.87792) < 1e-4);
+  assert.ok(Math.abs(fixed.heterogeneity.pValue - 0.00421) < 1e-4);
+
+  assert.strictEqual(random.model, 'random');
+  assert.ok(Math.abs(Math.log(random.or) - 0.24728) < 1e-4);
+  const randomSE = (Math.log(random.upperCI) - Math.log(random.lowerCI)) / (2 * Z_95);
+  assert.ok(Math.abs(randomSE - 0.45798) < 1e-4);
+  assert.ok(random.upperCI - random.lowerCI > fixed.upperCI - fixed.lowerCI,
+    'random effects should widen the interval under heterogeneity');
+});
+
+test('with no heterogeneity random effects equals fixed effect', () => {
+  const rows = [studyFrom(0.4, 0.2), studyFrom(0.4, 0.3), studyFrom(0.4, 0.25)];
+  const fixed = computePooledEffect(rows, 'fixed');
+  const random = computePooledEffect(rows, 'random');
+  assert.strictEqual(random.heterogeneity.tau2, 0);
+  assert.strictEqual(random.heterogeneity.i2, 0);
+  assert.ok(Math.abs(random.or - fixed.or) < 1e-12);
+  assert.ok(Math.abs(random.lowerCI - fixed.lowerCI) < 1e-12);
+});
+
+test('the heterogeneity line names tau^2 only for random effects', () => {
+  const rows = [studyFrom(Math.log(2), 0.2), studyFrom(Math.log(0.8), 0.25)];
+  assert.strictEqual(describeHeterogeneity(computePooledEffect(rows, 'fixed')),
+    'Heterogeneity: I² = 88%; p = 0.00421');
+  assert.strictEqual(describeHeterogeneity(computePooledEffect(rows, 'random')),
+    'Heterogeneity: τ² = 0.369; I² = 88%; p = 0.00421');
+  // One study has no heterogeneity to report.
+  assert.strictEqual(describeHeterogeneity(computePooledEffect([rows[0]], 'random')), '');
+});
+
+test('a log axis wider than three decades gets powers of ten only', () => {
+  assert.deepStrictEqual(generateSmartTicks(0.001, 10, 'log'), [0.001, 0.01, 0.1, 1, 10]);
+  assert.deepStrictEqual(generateSmartTicks(0.1, 10, 'log'), [0.1, 0.2, 0.5, 1, 2, 5, 10]);
+});
+
+test('a tiny heterogeneity p-value reads "p < 0.001"', () => {
+  const rows = [studyFrom(Math.log(4), 0.05), studyFrom(Math.log(0.25), 0.05)];
+  assert.match(describeHeterogeneity(computePooledEffect(rows, 'fixed')), /; p < 0\.001$/);
+});
