@@ -814,7 +814,9 @@ function ForestPlotGenerator() {
       groupTitleFontSize: toNumber(plotSettings.groupTitleFontSize, 16, 1),
       groupSpacing: toNumber(plotSettings.groupSpacing, 30, 0),
       spacingBeforeGroupTitle: toNumber(plotSettings.spacingBeforeGroupTitle, 20, 0),
-      spacingAfterGroupTitle: toNumber(plotSettings.spacingAfterGroupTitle, 5, 0)
+      // This one is allowed below zero: the input offers down to -20 for tight
+      // layouts, and flooring it at 0 silently swapped -10 for the default 5.
+      spacingAfterGroupTitle: toNumber(plotSettings.spacingAfterGroupTitle, 5, -20)
     };
 
     // CRASH FIX v2.2.3: Validate manual X-axis settings before rendering
