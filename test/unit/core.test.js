@@ -348,3 +348,53 @@ test('a written but unreadable p-value is counted, a blank one is not', () => {
   assert.match(describeImportProblems(built), /1 p-value\(s\) could not be read/);
   assert.strictEqual(describeImportProblems({}), '');
 });
+
+// --------------------------------------------------------- project loading
+
+const { normalizeSettings } = core;
+
+const plotWith = (data, extra = {}) => ({ id: 1, title: 'P', data, settings: {}, ...extra });
+
+test('a project row that is not an object is rejected with its location', () => {
+  assert.throws(() => validateProject({ plots: [plotWith([null])] }), /Plot 1, row 1/);
+  assert.throws(() => validateProject({ data: [42] }), /row 1/);
+});
+
+test('values React cannot render are replaced instead of crashing the editor', () => {
+  const { plots } = validateProject({
+    plots: [plotWith([{ id: 1, variable: { x: 1 }, or: '1,5', lowerCI: 'abc', upperCI: 2, group: ['A'], color: {} }],
+      { title: { nested: true } })]
+  });
+  const row = plots[0].data[0];
+  assert.strictEqual(row.variable, 'Variable 1');
+  assert.strictEqual(row.or, 1.5);
+  assert.strictEqual(row.lowerCI, '');
+  assert.strictEqual(row.upperCI, 2);
+  assert.strictEqual(row.group, '');
+  assert.strictEqual(row.color, 'auto');
+  assert.strictEqual(row.position, 1);
+  assert.strictEqual(plots[0].title, 'Plot 1');
+});
+
+test('duplicate or missing ids are made unique, keeping the usable ones', () => {
+  const { plots } = validateProject({
+    plots: [
+      plotWith([{ id: 3 }, { id: 3 }, {}]),
+      plotWith([{ id: 1 }])
+    ]
+  });
+  assert.deepStrictEqual(plots.map((p) => p.id), [1, 2]);
+  assert.deepStrictEqual(plots[0].data.map((r) => r.id), [3, 4, 5]);
+});
+
+test('settings of the wrong kind fall back to their defaults', () => {
+  const defaults = { title: 'T', fontSize: 14, showGridlines: false, xAxisMin: '' };
+  const merged = normalizeSettings(
+    { title: { a: 1 }, fontSize: 'big', showGridlines: 'yes', xAxisMin: 0.5, extra: 1 },
+    defaults
+  );
+  assert.deepStrictEqual(merged, { title: 'T', fontSize: 14, showGridlines: false, xAxisMin: 0.5, extra: 1 });
+  assert.strictEqual(normalizeSettings({ fontSize: '' }, defaults).fontSize, '');
+  assert.strictEqual(normalizeSettings({ fontSize: '12' }, defaults).fontSize, '12');
+  assert.deepStrictEqual(normalizeSettings(null, defaults), defaults);
+});

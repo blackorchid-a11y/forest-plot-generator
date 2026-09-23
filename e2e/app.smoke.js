@@ -46,6 +46,22 @@ function writeFixtures() {
 
   fs.writeFileSync(path.join(fixtureDir, 'header-only.csv'), 'Study,OR,Lower,Upper\n');
 
+  // Hand-edited: an object where text belongs used to throw inside React and
+  // take the editor down; the shared row id made editing one row edit both.
+  fs.writeFileSync(path.join(fixtureDir, 'malformed.json'), JSON.stringify({
+    version: '2.0',
+    globalSettings: { mainTitle: { oops: true }, plotWidth: 'wide' },
+    plots: [{
+      id: 1,
+      title: 'Malformed',
+      data: [
+        { id: 7, variable: { name: 'object' }, or: 1.5, lowerCI: 1.2, upperCI: 1.9 },
+        { id: 7, variable: 'Second', or: '0,8', lowerCI: 0.5, upperCI: 1.1 }
+      ],
+      settings: { footnote: ['not', 'text'], showGridlines: 'yes' }
+    }]
+  }));
+
   fs.writeFileSync(path.join(fixtureDir, 'empty-plots.json'),
     JSON.stringify({ version: '2.0', plots: [] }));
 
@@ -398,6 +414,23 @@ test('a project with no plots is rejected without taking the app down', async ()
   }));
   assert.strictEqual(alive.heading, 'Forest Plot Generator');
   assert.ok(alive.hasSvg, 'the plot disappeared');
+});
+
+test('a malformed project loads without taking the editor down', async () => {
+  await win.evaluate(() => { window.__alerts = []; });
+  await win.locator('input[accept=".json"]').setInputFiles(path.join(fixtureDir, 'malformed.json'));
+  await win.waitForTimeout(1500);
+
+  assert.strictEqual(await win.evaluate(() => document.querySelector('h1').textContent),
+    'Forest Plot Generator', 'the crash screen came up');
+  const rows = await tableRows();
+  assert.deepStrictEqual(rows.map((r) => r.variable), ['Variable 1', 'Second']);
+  assert.strictEqual(rows[1].or, '0.8');
+
+  // Editing one row must not also edit the row that shared its id.
+  await win.locator('tbody tr').nth(1).locator('input').nth(1).fill('Renamed');
+  await win.waitForTimeout(500);
+  assert.deepStrictEqual((await tableRows()).map((r) => r.variable), ['Variable 1', 'Renamed']);
 });
 
 test('clearing a numeric field does not blank the plot', async () => {

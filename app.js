@@ -8,7 +8,7 @@ const {
   parseNumericInput, toNumber,
   buildRowsFromRecords, buildRowsWithMapping, describeImportProblems, describeMapping,
   resolveColumns,
-  validateProject, sortRowsByPosition, groupRowsIntoSections
+  normalizeSettings, validateProject, sortRowsByPosition, groupRowsIntoSections
 } = ForestPlotCore;
 
 // Every plot's settings start from these. Projects written by older versions
@@ -33,6 +33,29 @@ const DEFAULT_PLOT_SETTINGS = {
   xAxisMax: '',
   xAxisTicks: ''
 };
+
+const DEFAULT_GLOBAL_SETTINGS = {
+  mainTitle: 'Forest Plot',
+  layout: 'vertical', // 'vertical' or 'horizontal'
+  plotWidth: 800,
+  plotHeight: 600
+};
+
+const PROJECT_FILE_VERSION = '2.0';
+
+// The project as of the last successful render, kept outside React so the
+// crash screen can still offer it after the editor has been torn down.
+let lastGoodProject = null;
+
+function downloadProjectFile(project, filename) {
+  const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 // Comprehensive color palette
 const COLOR_PALETTE = [
@@ -367,12 +390,7 @@ function ForestPlotGenerator() {
   const [inputMode, setInputMode] = useState('manual');
 
   // Global settings for the entire project
-  const [globalSettings, setGlobalSettings] = useState({
-    mainTitle: 'Forest Plot',
-    layout: 'vertical', // 'vertical' or 'horizontal'
-    plotWidth: 800,
-    plotHeight: 600
-  });
+  const [globalSettings, setGlobalSettings] = useState({ ...DEFAULT_GLOBAL_SETTINGS });
 
   // Array of plots, each with its own data and settings
   const [plots, setPlots] = useState([
@@ -416,6 +434,13 @@ function ForestPlotGenerator() {
   };
 
   const svgRef = useRef(null);
+
+  // Effects run only after a render has committed, so this always holds a
+  // project that rendered. If the next change crashes the editor, the crash
+  // screen can hand back the work as it was just before.
+  useEffect(() => {
+    lastGoodProject = { version: PROJECT_FILE_VERSION, plots, globalSettings };
+  }, [plots, globalSettings]);
 
   const addPlot = () => {
     const newId = Math.max(...plots.map(p => p.id), 0) + 1;
@@ -652,18 +677,7 @@ function ForestPlotGenerator() {
   };
 
   const saveProject = () => {
-    const project = {
-      version: '2.0',
-      plots,
-      globalSettings
-    };
-    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'forest-plot-project.json';
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadProjectFile({ version: PROJECT_FILE_VERSION, plots, globalSettings }, 'forest-plot-project.json');
   };
 
   const loadProject = (e) => {
@@ -681,36 +695,31 @@ function ForestPlotGenerator() {
         const validated = validateProject(project);
 
         if (validated.kind === 'current') {
-          // Fill in any setting the saving version did not know about.
+          // Fill in any setting the saving version did not know about, and
+          // replace any of the wrong kind.
           setPlots(validated.plots.map((plot) => ({
             ...plot,
-            settings: { ...DEFAULT_PLOT_SETTINGS, ...plot.settings }
+            settings: normalizeSettings(plot.settings, DEFAULT_PLOT_SETTINGS)
           })));
           if (validated.globalSettings) {
-            setGlobalSettings(validated.globalSettings);
+            setGlobalSettings(normalizeSettings(validated.globalSettings, DEFAULT_GLOBAL_SETTINGS));
           }
           setActivePlotId(validated.plots[0].id);
         } else {
-          // Add position field if missing (backward compatibility)
-          const dataWithPositions = validated.data.map((row, idx) => ({
-            ...row,
-            position: row.position !== undefined ? row.position : idx + 1
-          }));
-
+          // Rows already carry positions (validateProject fills them in).
           const legacySettings = validated.settings;
-          const newSettings = { ...DEFAULT_PLOT_SETTINGS, ...legacySettings };
+          const newSettings = normalizeSettings(legacySettings, DEFAULT_PLOT_SETTINGS);
 
-          const newGlobalSettings = {
+          const newGlobalSettings = normalizeSettings({
             mainTitle: legacySettings.title || 'Forest Plot',
-            layout: 'vertical',
             plotWidth: legacySettings.plotWidth || 800,
             plotHeight: legacySettings.plotHeight || 600
-          };
+          }, DEFAULT_GLOBAL_SETTINGS);
 
           setPlots([{
             id: 1,
             title: 'Plot 1',
-            data: dataWithPositions,
+            data: validated.data,
             settings: newSettings
           }]);
           setGlobalSettings(newGlobalSettings);
@@ -1778,18 +1787,30 @@ class ErrorBoundary extends React.Component {
   render() {
     if (!this.state.error) return this.props.children;
 
+    // The editor is gone at this point, and with it any unsaved work -- except
+    // the copy kept in lastGoodProject. Say so plainly and offer it first.
     return React.createElement('div', { className: 'min-h-screen bg-gray-50 p-8' },
       React.createElement('div', { className: 'max-w-2xl mx-auto bg-white border border-red-300 rounded-lg p-6' },
         React.createElement('h1', { className: 'text-2xl font-bold text-red-600 mb-3' },
           'Something went wrong'),
         React.createElement('p', { className: 'mb-3' },
-          'The plot could not be rendered. Your last action has not been applied.'),
+          'The editor hit an error and had to stop. ' +
+          (lastGoodProject
+            ? 'Download a backup of your work as it was just before the error, ' +
+              'then start over and load the backup with Load Project.'
+            : 'Starting over will clear anything that has not been saved.')),
         React.createElement('p', { className: 'mb-4 text-sm font-mono bg-red-50 p-3 rounded break-words' },
           String(this.state.error && this.state.error.message)),
-        React.createElement('button', {
-          className: 'px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700',
-          onClick: () => window.location.reload()
-        }, 'Start a blank project')
+        React.createElement('div', { className: 'flex flex-wrap gap-2' },
+          lastGoodProject && React.createElement('button', {
+            className: 'px-4 py-2 rounded bg-purple-600 text-white hover:bg-purple-700',
+            onClick: () => downloadProjectFile(lastGoodProject, 'forest-plot-backup.json')
+          }, 'Download backup'),
+          React.createElement('button', {
+            className: 'px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700',
+            onClick: () => window.location.reload()
+          }, 'Start a blank project')
+        )
       )
     );
   }
