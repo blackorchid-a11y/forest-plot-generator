@@ -101,10 +101,10 @@ Perfect for:
 ### Smart Axis Controls
 
 #### Automatic Mode (Recommended)
-- Intelligent range calculation with 15% padding
-- Smart tick mark generation
+- Covers all of the data and the pooled interval, never clipping a value
+- Always includes the line of no effect (1)
+- Tick labels show each tick's exact value
 - Optimized for both linear and logarithmic scales
-- Always includes OR=1.0 when relevant
 - Crash-proof with comprehensive validation
 
 #### Manual Mode
@@ -117,7 +117,9 @@ Perfect for:
 ### Visualization Options
 - **Scale Types**: Linear or Logarithmic
 - **Gridlines**: Optional dashed gridlines at tick marks
-- **Meta-Analysis Mode**: Display pooled effect with diamond marker
+- **Meta-Analysis Mode**: Display the pooled effect with a diamond marker, pooled by a
+  fixed-effect (inverse variance) or random-effects (DerSimonian–Laird) model, with a
+  heterogeneity line (I², Cochran's Q p-value, and τ² for random effects)
 - **Custom Dimensions**: Adjustable plot width and height per plot
 - **Font Selection**: 6 professional fonts available
 - **Adjustable Font Size**: Fine-tune text sizing for each plot
@@ -179,7 +181,13 @@ Perfect for:
 - Cells that cannot be read as numbers are **left empty**, never guessed. The import tells
   you how many rows were affected, and such rows are excluded from the plot rather than
   plotted as a false result.
-- A comma decimal separator (`1,52`) is understood.
+- A comma decimal separator (`1,52`, `0,025`) is understood. A lone comma followed by
+  three digits after a non-zero number (`1,520`) is ambiguous and is not guessed.
+- Confidence limits are recognised under many spellings: `Lower CI`, `Lower 95% CI`,
+  `95% CI lower`, `LCL`, `LL`/`UL`, and so on. The Excel wizard pre-selects every column
+  it recognises.
+- A p-value that cannot be read (`ns`, `<0.05`) is left empty and reported.
+- A file with no data rows is refused rather than replacing your current data.
 
 ### Excel/CSV Format Example
 ```
@@ -252,6 +260,17 @@ Create complex figures with multiple plots:
 - **Global Settings**: Control main title and layout for all plots
 - **Independent Settings**: Each plot has its own data, colors, fonts, axes
 
+### Meta-Analysis
+Tick **Meta-analysis Mode** to add a pooled row, then choose the **Model**:
+- **Fixed effect (inverse variance)**: assumes one true effect shared by every study.
+- **Random effects (DerSimonian–Laird)**: allows the true effect to vary between
+  studies; its interval widens when they disagree.
+
+With two or more studies, a line under the pooled row reports heterogeneity: I² (the
+share of variation beyond chance), the p-value of Cochran's Q test, and τ² (the
+between-study variance, random effects only). The pooling assumes each row's interval
+is a 95% confidence interval for a ratio (OR, RR, HR).
+
 ### Section Grouping
 Group variables by category (e.g., mortality outcomes, morbidity outcomes, laboratory findings):
 - Displays section headers in bold
@@ -281,7 +300,7 @@ For precise control:
 ### P-Value Display
 Enable p-values to show statistical significance:
 - Format: "OR (95% CI) p=value"
-- Shows "p=<0.001" for very small p-values
+- Shows "p<0.001" for very small p-values; rows without a p-value show none
 - Displays exact values as entered
 - Automatic margin adjustment to fit text
 
@@ -416,7 +435,10 @@ npm run build          # Windows installer
 npm run build-mac      # macOS DMG
 ```
 
-All libraries are bundled in `vendor/`, so the app runs with no network access. If you
+All libraries are bundled in `vendor/`, so the app runs with no network access.
+Excel files are parsed in a separate utility process (`xlsx-worker.js`). SheetJS 0.20.3
+comes from the npm alias `xlsx` → `@e965/xlsx`, because SheetJS publishes 0.20.x only on
+its own CDN; see the CHANGELOG for the command to install it from there instead. If you
 add Tailwind classes, run `npm run build-css` to regenerate the stylesheet. CI runs the
 lint and both test suites before it will build an installer.
 

@@ -5,6 +5,35 @@ All notable changes to the Forest Plot Generator will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Random-effects meta-analysis.** Under *Meta-analysis Mode*, each plot can pool with a fixed-effect (inverse variance, as before) or a DerSimonian–Laird random-effects model. The pooled row names its model, and with two or more studies a heterogeneity line reports I², the Cochran's Q p-value and, for random effects, τ². Existing projects keep fixed effect.
+- **Crash-screen backup.** If the editor ever hits an error, the crash screen offers *Download backup*: your project as it was just before the error.
+
+### Fixed
+- **Negative "Space After Section Title" works again.** Since 3.1.0 a negative value silently fell back to 5, making spacing wider instead of tighter.
+- **Axis labels show their real values.** An axis around 1 read `0.9, 1.0, 1.0, 1.1, 1.1` (0.95 printed as `1.0`), and log ticks below 0.005 read `0.00`. 1 was also sometimes drawn twice.
+- **The automatic axis no longer clips data.** It never went below 0.01, so rare-event ratios were pinned to the edge of a log axis, and a linear axis whose values were all below 0.01 came out backwards. It now covers all the data, the pooled interval, and the line of no effect.
+- **The line of no effect is drawn when the axis starts or ends exactly at 1**, which is where a log axis usually starts.
+- **Wide log axes no longer print colliding tick labels** (`0.0010.002`); past three decades only powers of ten are labelled.
+- **Dropping a file onto the window no longer replaces the app** and discards unsaved work.
+- **European p-values are read.** `0,025`, `0,001` and `-0,125` were dropped; only an ambiguous thousands group such as `1,520` is still refused. A p-value that cannot be read (`ns`, `<0.05`) is now reported in the import summary instead of vanishing.
+- **More confidence-limit headers are recognised**: `Lower 95% CI`, `95% CI upper`, `LL`/`UL` and similar.
+- **Excel import wizard**: recognised columns are pre-selected; the choices reset when the columns change (they used to keep pointing at columns that no longer existed); a slow preview can no longer overwrite a newer one; and a sheet that cannot be read shows an error instead of leaving the wizard stuck.
+- **An empty or header-only CSV, or an empty Excel range, no longer wipes the current plot.** Malformed CSV lines are reported.
+- **No dangling `p=`** on rows without a p-value, and very small p-values read `p<0.001` rather than `p=<0.001`.
+- **Hand-edited or old project files are cleaned up on load**: an object where text belongs used to crash the editor, a non-object row is rejected with its location, and rows or plots sharing an id no longer edit together.
+- The crash screen no longer claims "your last action has not been applied".
+
+### Security
+- **SheetJS upgraded from 0.18.5 to 0.20.3**, fixing CVE-2023-30533 (prototype pollution from a crafted file) and CVE-2024-22363 (ReDoS). SheetJS publishes 0.20.x only on its own CDN, so it is installed through the npm alias `xlsx` → `@e965/xlsx@0.20.3`, a republish of the official build whose integrity hash is pinned in `package-lock.json`. To install from SheetJS directly instead: `npm i xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`.
+- **Spreadsheets are parsed in an isolated process** (`xlsx-worker.js`, one Electron utility process per open file) rather than the main process. A parser bug triggered by a crafted file stays in that process, and a parse that hangs is stopped after a timeout instead of freezing the app.
+- The window refuses to navigate away from the app or open new windows.
+
+### Changed
+- CI installs with `npm ci`, so builds use exactly the locked dependencies.
+
 ## [3.1.0] - 2026-09-21
 
 ### Fixed
