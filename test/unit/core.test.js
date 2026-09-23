@@ -253,3 +253,221 @@ test('rows without a position fall back to id order', () => {
   const rows = [{ id: 3, group: '' }, { id: 1, group: '' }, { id: 2, group: '' }];
   assert.deepStrictEqual(sortRowsByPosition(rows).map((r) => r.id), [1, 2, 3]);
 });
+
+// -------------------------------------------------------------------- axis
+
+const { computeAutoAxis, generateSmartTicks, formatTickLabel } = core;
+
+test('tick labels near 1 are all distinct and show their real values', () => {
+  const axis = computeAutoAxis([0.95, 1, 1.05], 'linear');
+  const ticks = generateSmartTicks(axis.min, axis.max, 'linear');
+  const labels = ticks.map(formatTickLabel);
+  assert.deepStrictEqual(labels, ['0.9', '0.95', '1', '1.05', '1.1']);
+  assert.strictEqual(new Set(labels).size, labels.length);
+});
+
+test('linear ticks carry no float drift and never draw 1 twice', () => {
+  const ticks = generateSmartTicks(0.9, 1.1, 'linear');
+  assert.deepStrictEqual(ticks, [0.9, 0.95, 1, 1.05, 1.1]);
+  assert.strictEqual(ticks.filter((t) => Math.abs(t - 1) < 1e-9).length, 1);
+});
+
+test('log tick labels keep small values readable', () => {
+  const labels = generateSmartTicks(0.001, 1, 'log').map(formatTickLabel);
+  assert.ok(labels.includes('0.001'));
+  assert.ok(labels.includes('0.005'));
+  assert.ok(!labels.includes('0.00'));
+});
+
+test('the automatic log axis does not clip rare-event ratios', () => {
+  const axis = computeAutoAxis([0.003, 0.4, 2], 'log');
+  assert.ok(axis.min <= 0.003, `axis starts at ${axis.min}`);
+  assert.ok(axis.max >= 2);
+});
+
+test('the automatic linear axis stays the right way round for tiny ratios', () => {
+  const axis = computeAutoAxis([0.002, 0.005, 0.008], 'linear');
+  assert.ok(axis.min < axis.max);
+  assert.ok(axis.min <= 0.002);
+  assert.ok(axis.min >= 0);
+});
+
+test('the automatic axis always contains the line of no effect', () => {
+  for (const scale of ['linear', 'log']) {
+    for (const values of [[2, 3, 4], [0.2, 0.3, 0.4], [1.2, 1.5, 1.9]]) {
+      const axis = computeAutoAxis(values, scale);
+      assert.ok(axis.min <= 1 && axis.max >= 1, `${scale} ${values}: ${axis.min}-${axis.max}`);
+    }
+  }
+});
+
+test('tick generation is bounded for unusable ranges', () => {
+  assert.deepStrictEqual(generateSmartTicks(1, Infinity, 'linear'), []);
+  assert.deepStrictEqual(generateSmartTicks(2, 1, 'linear'), []);
+  assert.deepStrictEqual(generateSmartTicks(0, 10, 'log'), []);
+});
+
+// ------------------------------------------------------------------ import
+
+const { buildRowsWithMapping, describeImportProblems } = core;
+
+test('comma decimals with a zero whole part are read, thousands groups are not', () => {
+  assert.strictEqual(parseNumericCell('0,025'), 0.025);
+  assert.strictEqual(parseNumericCell('0,001'), 0.001);
+  assert.strictEqual(parseNumericCell('-0,125'), -0.125);
+  assert.strictEqual(parseNumericCell(',5'), 0.5);
+  assert.strictEqual(parseNumericCell('1,5'), 1.5);
+  assert.strictEqual(parseNumericCell('1,520'), null);
+});
+
+test('common spellings of the confidence limits are matched by name', () => {
+  const cases = [
+    ['Study', 'OR', 'P-value', 'Lower 95% CI', 'Upper 95% CI'],
+    ['Study', 'OR', '95% CI lower', '95% CI upper', 'P'],
+    ['Trial', 'HR', 'LL', 'UL', 'p']
+  ];
+  cases.forEach((headers) => {
+    const { mapping, matchedByName } = resolveColumns(headers);
+    assert.ok(matchedByName.lowerCI && matchedByName.upperCI, JSON.stringify(headers));
+    assert.ok(/lower|ll/i.test(mapping.lowerCI), `lower -> ${mapping.lowerCI}`);
+    assert.ok(/upper|ul/i.test(mapping.upperCI), `upper -> ${mapping.upperCI}`);
+  });
+});
+
+test('a written but unreadable p-value is counted, a blank one is not', () => {
+  const mapping = { variable: 'S', or: 'OR', lowerCI: 'L', upperCI: 'U', pValue: 'P' };
+  const records = [
+    { S: 'a', OR: 1.5, L: 1.2, U: 1.9, P: 'ns' },
+    { S: 'b', OR: 1.5, L: 1.2, U: 1.9, P: '' },
+    { S: 'c', OR: 1.5, L: 1.2, U: 1.9, P: '0,03' }
+  ];
+  const built = buildRowsWithMapping(records, mapping);
+  assert.strictEqual(built.pValueUnreadableCount, 1);
+  assert.strictEqual(built.unreadableCount, 0);
+  assert.strictEqual(built.rows[2].pValue, 0.03);
+  assert.match(describeImportProblems(built), /1 p-value\(s\) could not be read/);
+  assert.strictEqual(describeImportProblems({}), '');
+});
+
+// --------------------------------------------------------- project loading
+
+const { normalizeSettings } = core;
+
+const plotWith = (data, extra = {}) => ({ id: 1, title: 'P', data, settings: {}, ...extra });
+
+test('a project row that is not an object is rejected with its location', () => {
+  assert.throws(() => validateProject({ plots: [plotWith([null])] }), /Plot 1, row 1/);
+  assert.throws(() => validateProject({ data: [42] }), /row 1/);
+});
+
+test('values React cannot render are replaced instead of crashing the editor', () => {
+  const { plots } = validateProject({
+    plots: [plotWith([{ id: 1, variable: { x: 1 }, or: '1,5', lowerCI: 'abc', upperCI: 2, group: ['A'], color: {} }],
+      { title: { nested: true } })]
+  });
+  const row = plots[0].data[0];
+  assert.strictEqual(row.variable, 'Variable 1');
+  assert.strictEqual(row.or, 1.5);
+  assert.strictEqual(row.lowerCI, '');
+  assert.strictEqual(row.upperCI, 2);
+  assert.strictEqual(row.group, '');
+  assert.strictEqual(row.color, 'auto');
+  assert.strictEqual(row.position, 1);
+  assert.strictEqual(plots[0].title, 'Plot 1');
+});
+
+test('duplicate or missing ids are made unique, keeping the usable ones', () => {
+  const { plots } = validateProject({
+    plots: [
+      plotWith([{ id: 3 }, { id: 3 }, {}]),
+      plotWith([{ id: 1 }])
+    ]
+  });
+  assert.deepStrictEqual(plots.map((p) => p.id), [1, 2]);
+  assert.deepStrictEqual(plots[0].data.map((r) => r.id), [3, 4, 5]);
+});
+
+test('settings of the wrong kind fall back to their defaults', () => {
+  const defaults = { title: 'T', fontSize: 14, showGridlines: false, xAxisMin: '' };
+  const merged = normalizeSettings(
+    { title: { a: 1 }, fontSize: 'big', showGridlines: 'yes', xAxisMin: 0.5, extra: 1 },
+    defaults
+  );
+  assert.deepStrictEqual(merged, { title: 'T', fontSize: 14, showGridlines: false, xAxisMin: 0.5, extra: 1 });
+  assert.strictEqual(normalizeSettings({ fontSize: '' }, defaults).fontSize, '');
+  assert.strictEqual(normalizeSettings({ fontSize: '12' }, defaults).fontSize, '12');
+  assert.deepStrictEqual(normalizeSettings(null, defaults), defaults);
+});
+
+// ------------------------------------------------------ random effects, I^2
+
+const { chiSquareUpperTail, describeHeterogeneity, Z_95 } = core;
+
+// A study with a given log-ratio and standard error, as its OR and 95% CI.
+const studyFrom = (logOR, se) => ({
+  or: Math.exp(logOR),
+  lowerCI: Math.exp(logOR - Z_95 * se),
+  upperCI: Math.exp(logOR + Z_95 * se)
+});
+
+test('chi-square upper tail matches standard table values', () => {
+  assert.ok(Math.abs(chiSquareUpperTail(3.841459, 1) - 0.05) < 1e-6);
+  assert.ok(Math.abs(chiSquareUpperTail(6.634897, 1) - 0.01) < 1e-6);
+  assert.ok(Math.abs(chiSquareUpperTail(18.307038, 10) - 0.05) < 1e-6);
+  assert.ok(Math.abs(chiSquareUpperTail(0.5, 3) - 0.9188914) < 1e-6);
+  assert.strictEqual(chiSquareUpperTail(0, 4), 1);
+  assert.ok(Number.isNaN(chiSquareUpperTail(1, 0)));
+});
+
+test('random effects matches a hand-worked DerSimonian-Laird example', () => {
+  // y = ln 2 (se 0.2) and ln 0.8 (se 0.25). By hand: fixed weights 25 and 16,
+  // pooled 0.33557, Q = 8.1911, C = 19.512, tau^2 = 0.36854, I^2 = 0.87792,
+  // random weights 2.4479 and 2.3201, pooled 0.24728 with SE 0.45798.
+  const rows = [studyFrom(Math.log(2), 0.2), studyFrom(Math.log(0.8), 0.25)];
+  const fixed = computePooledEffect(rows, 'fixed');
+  const random = computePooledEffect(rows, 'random');
+
+  assert.ok(Math.abs(Math.log(fixed.or) - 0.33557) < 1e-4);
+  assert.ok(Math.abs(fixed.heterogeneity.q - 8.1911) < 1e-3);
+  assert.strictEqual(fixed.heterogeneity.df, 1);
+  assert.ok(Math.abs(fixed.heterogeneity.tau2 - 0.36854) < 1e-4);
+  assert.ok(Math.abs(fixed.heterogeneity.i2 - 0.87792) < 1e-4);
+  assert.ok(Math.abs(fixed.heterogeneity.pValue - 0.00421) < 1e-4);
+
+  assert.strictEqual(random.model, 'random');
+  assert.ok(Math.abs(Math.log(random.or) - 0.24728) < 1e-4);
+  const randomSE = (Math.log(random.upperCI) - Math.log(random.lowerCI)) / (2 * Z_95);
+  assert.ok(Math.abs(randomSE - 0.45798) < 1e-4);
+  assert.ok(random.upperCI - random.lowerCI > fixed.upperCI - fixed.lowerCI,
+    'random effects should widen the interval under heterogeneity');
+});
+
+test('with no heterogeneity random effects equals fixed effect', () => {
+  const rows = [studyFrom(0.4, 0.2), studyFrom(0.4, 0.3), studyFrom(0.4, 0.25)];
+  const fixed = computePooledEffect(rows, 'fixed');
+  const random = computePooledEffect(rows, 'random');
+  assert.strictEqual(random.heterogeneity.tau2, 0);
+  assert.strictEqual(random.heterogeneity.i2, 0);
+  assert.ok(Math.abs(random.or - fixed.or) < 1e-12);
+  assert.ok(Math.abs(random.lowerCI - fixed.lowerCI) < 1e-12);
+});
+
+test('the heterogeneity line names tau^2 only for random effects', () => {
+  const rows = [studyFrom(Math.log(2), 0.2), studyFrom(Math.log(0.8), 0.25)];
+  assert.strictEqual(describeHeterogeneity(computePooledEffect(rows, 'fixed')),
+    'Heterogeneity: I² = 88%; p = 0.00421');
+  assert.strictEqual(describeHeterogeneity(computePooledEffect(rows, 'random')),
+    'Heterogeneity: τ² = 0.369; I² = 88%; p = 0.00421');
+  // One study has no heterogeneity to report.
+  assert.strictEqual(describeHeterogeneity(computePooledEffect([rows[0]], 'random')), '');
+});
+
+test('a log axis wider than three decades gets powers of ten only', () => {
+  assert.deepStrictEqual(generateSmartTicks(0.001, 10, 'log'), [0.001, 0.01, 0.1, 1, 10]);
+  assert.deepStrictEqual(generateSmartTicks(0.1, 10, 'log'), [0.1, 0.2, 0.5, 1, 2, 5, 10]);
+});
+
+test('a tiny heterogeneity p-value reads "p < 0.001"', () => {
+  const rows = [studyFrom(Math.log(4), 0.05), studyFrom(Math.log(0.25), 0.05)];
+  assert.match(describeHeterogeneity(computePooledEffect(rows, 'fixed')), /; p < 0\.001$/);
+});

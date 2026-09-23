@@ -18,8 +18,10 @@ jobs:
       with:
         node-version: '20'
 
+    # npm ci installs exactly what package-lock.json pins (including the
+    # aliased, integrity-checked SheetJS) and fails if the lockfile is stale.
     - name: Install dependencies
-      run: npm install
+      run: npm ci
 
     - name: Lint
       run: npm run lint
@@ -50,8 +52,10 @@ jobs:
       with:
         node-version: '20'
     
+    # npm ci installs exactly what package-lock.json pins (including the
+    # aliased, integrity-checked SheetJS) and fails if the lockfile is stale.
     - name: Install dependencies
-      run: npm install
+      run: npm ci
     
     - name: Build Windows app
       run: npm run build
@@ -74,8 +78,10 @@ jobs:
       with:
         node-version: '20'
     
+    # npm ci installs exactly what package-lock.json pins (including the
+    # aliased, integrity-checked SheetJS) and fails if the lockfile is stale.
     - name: Install dependencies
-      run: npm install
+      run: npm ci
     
     - name: Build macOS app
       run: npm run build-mac

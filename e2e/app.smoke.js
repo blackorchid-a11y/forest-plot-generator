@@ -11,6 +11,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { pathToFileURL } = require('node:url');
 const { _electron: electron } = require('playwright');
 const XLSX = require('xlsx');
 
@@ -37,6 +38,46 @@ function writeFixtures() {
   fs.writeFileSync(path.join(fixtureDir, 'swapped.csv'),
     'Study,Lower CI,OR,Upper CI,P-value,N,Group\n' +
     'Trial A,1.2,1.5,1.9,0.001,120,Adults\n');
+
+  // An OLE2 header followed by junk: SheetJS rejects it.
+  fs.writeFileSync(path.join(fixtureDir, 'corrupt.xlsx'), Buffer.from([
+    0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, ...new Array(600).fill(7)
+  ]));
+
+  fs.writeFileSync(path.join(fixtureDir, 'header-only.csv'), 'Study,OR,Lower,Upper\n');
+
+  // Hand-edited: an object where text belongs used to throw inside React and
+  // take the editor down; the shared row id made editing one row edit both.
+  fs.writeFileSync(path.join(fixtureDir, 'malformed.json'), JSON.stringify({
+    version: '2.0',
+    globalSettings: { mainTitle: { oops: true }, plotWidth: 'wide' },
+    plots: [{
+      id: 1,
+      title: 'Malformed',
+      data: [
+        { id: 7, variable: { name: 'object' }, or: 1.5, lowerCI: 1.2, upperCI: 1.9 },
+        { id: 7, variable: 'Second', or: '0,8', lowerCI: 0.5, upperCI: 1.1 }
+      ],
+      settings: { footnote: ['not', 'text'], showGridlines: 'yes' }
+    }]
+  }));
+
+  // Every estimate close to 1, inside a section: the axis used to label 0.95
+  // as "1.0" beside the real 1.0.
+  fs.writeFileSync(path.join(fixtureDir, 'near-one.json'), JSON.stringify({
+    version: '2.0',
+    globalSettings: { mainTitle: 'Near one', layout: 'vertical', plotWidth: 800, plotHeight: 600 },
+    plots: [{
+      id: 1,
+      title: 'Plot 1',
+      data: [
+        { id: 1, variable: 'Row A', or: 0.97, lowerCI: 0.95, upperCI: 0.99, group: 'Section', color: 'auto', position: 1 },
+        { id: 2, variable: 'Row B', or: 1.0, lowerCI: 0.97, upperCI: 1.03, group: 'Section', color: 'auto', position: 2 },
+        { id: 3, variable: 'Row C', or: 1.03, lowerCI: 1.01, upperCI: 1.05, group: 'Section', color: 'auto', position: 3 }
+      ],
+      settings: {}
+    }]
+  }));
 
   fs.writeFileSync(path.join(fixtureDir, 'empty-plots.json'),
     JSON.stringify({ version: '2.0', plots: [] }));
@@ -307,6 +348,12 @@ test('Excel imports through the IPC bridge with real column names', async () => 
   assert.ok(options.includes('Odds Ratio'), `got ${JSON.stringify(options)}`);
   assert.ok(!options.includes('0'), 'columns came back as array indices');
 
+  // Columns recognised by name arrive already chosen.
+  const prefilled = await win.evaluate(() =>
+    [...document.querySelectorAll('select')].slice(0, 7).map((sel) => sel.value));
+  assert.deepStrictEqual(prefilled,
+    ['Study', 'Odds Ratio', 'Lower CI', 'Upper CI', 'P-value', 'N', 'Group']);
+
   await win.evaluate(() => {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
     const want = ['Study', 'Odds Ratio', 'Lower CI', 'Upper CI', 'P-value', 'N', 'Group'];
@@ -327,6 +374,47 @@ test('Excel imports through the IPC bridge with real column names', async () => 
   // "N/A" and a blank must stay empty rather than become 1.0 / 0.8.
   assert.strictEqual(rows[2].or, '');
   assert.strictEqual(rows[2].lower, '');
+
+  // Trial C's p-value is "ns": dropped, but not silently.
+  const alerts = await win.evaluate(() => window.__alerts);
+  assert.ok(alerts.some((a) => /1 p-value\(s\) could not be read/.test(a)),
+    `alerts were ${JSON.stringify(alerts)}`);
+});
+
+test('a corrupt spreadsheet is reported cleanly and the app keeps working', async () => {
+  await win.evaluate(() => { window.__alerts = []; });
+  await win.locator('input[accept=".xlsx"]').setInputFiles(path.join(fixtureDir, 'corrupt.xlsx'));
+  await win.waitForTimeout(2500);
+
+  const alerts = await win.evaluate(() => window.__alerts);
+  assert.strictEqual(alerts.length, 1, `alerts were ${JSON.stringify(alerts)}`);
+  assert.match(alerts[0], /^Error uploading file: /);
+  // Electron's IPC wrapper text must not reach the user.
+  assert.ok(!/invoking remote method/.test(alerts[0]), alerts[0]);
+  assert.strictEqual(await win.locator('text=Import from Excel').count(), 0);
+});
+
+test('a row without a p-value does not end in a dangling "p="', async () => {
+  const toggle = win.locator('label').filter({ hasText: 'Show P-Values' }).locator('input');
+  await toggle.check();
+  await win.waitForTimeout(800);
+  const texts = await win.evaluate(() =>
+    [...document.querySelectorAll('svg text')].map((t) => t.textContent));
+  assert.ok(texts.some((t) => /p=0\.001$/.test(t)), 'p-values are not shown at all');
+  assert.ok(!texts.some((t) => /p=\s*$/.test(t)), `dangling p=: ${JSON.stringify(texts)}`);
+  await toggle.uncheck();
+  await win.waitForTimeout(500);
+});
+
+test('a CSV with no data rows leaves the current data alone', async () => {
+  const before = await tableRows();
+  await win.evaluate(() => { window.__alerts = []; });
+  await win.locator('input[accept=".csv"]').setInputFiles(path.join(fixtureDir, 'header-only.csv'));
+  await win.waitForTimeout(1500);
+
+  const alerts = await win.evaluate(() => window.__alerts);
+  assert.ok(alerts.some((a) => /No data rows/.test(a)), `alerts were ${JSON.stringify(alerts)}`);
+  assert.deepStrictEqual(await tableRows(), before);
 });
 
 test('a project with no plots is rejected without taking the app down', async () => {
@@ -345,6 +433,23 @@ test('a project with no plots is rejected without taking the app down', async ()
   assert.ok(alive.hasSvg, 'the plot disappeared');
 });
 
+test('a malformed project loads without taking the editor down', async () => {
+  await win.evaluate(() => { window.__alerts = []; });
+  await win.locator('input[accept=".json"]').setInputFiles(path.join(fixtureDir, 'malformed.json'));
+  await win.waitForTimeout(1500);
+
+  assert.strictEqual(await win.evaluate(() => document.querySelector('h1').textContent),
+    'Forest Plot Generator', 'the crash screen came up');
+  const rows = await tableRows();
+  assert.deepStrictEqual(rows.map((r) => r.variable), ['Variable 1', 'Second']);
+  assert.strictEqual(rows[1].or, '0.8');
+
+  // Editing one row must not also edit the row that shared its id.
+  await win.locator('tbody tr').nth(1).locator('input').nth(1).fill('Renamed');
+  await win.waitForTimeout(500);
+  assert.deepStrictEqual((await tableRows()).map((r) => r.variable), ['Variable 1', 'Renamed']);
+});
+
 test('clearing a numeric field does not blank the plot', async () => {
   await win.locator('input[placeholder="Width"]').fill('');
   await win.waitForTimeout(800);
@@ -356,10 +461,97 @@ test('clearing a numeric field does not blank the plot', async () => {
   assert.strictEqual(width, '640');
 });
 
+test('random effects shows its model and the heterogeneity line', async () => {
+  // Two precise but contradictory studies: the random-effects interval
+  // (about 0.07-15) runs far past every study's, and past an automatic axis
+  // sized from the study rows alone (0-6).
+  const setRow = async (index, values) => {
+    const cells = win.locator('tbody tr').nth(index).locator('input');
+    for (const [cell, value] of Object.entries(values)) await cells.nth(Number(cell)).fill(value);
+  };
+  await setRow(0, { 2: '4', 3: '3.6', 4: '4.4' });
+  await setRow(1, { 2: '0.25', 3: '0.22', 4: '0.28' });
+  await win.waitForTimeout(400);
+
+  await win.locator('label').filter({ hasText: 'Meta-analysis Mode' }).locator('input').check();
+  await win.waitForTimeout(600);
+  const texts = () => win.evaluate(() =>
+    [...document.querySelectorAll('svg text')].map((t) => t.textContent));
+
+  let shown = await texts();
+  assert.ok(shown.includes('Fixed-effect model'), JSON.stringify(shown));
+  assert.ok(shown.some((t) => /^Heterogeneity: I\u00b2 = \d+%; p/.test(t)), JSON.stringify(shown));
+
+  await win.locator('select').filter({ hasText: 'Random effects' }).selectOption('random');
+  await win.waitForTimeout(600);
+  shown = await texts();
+  assert.ok(shown.includes('Random-effects model'), JSON.stringify(shown));
+  assert.ok(shown.some((t) => /^Heterogeneity: \u03c4\u00b2 = [\d.]+; I\u00b2 = \d+%/.test(t)),
+    JSON.stringify(shown));
+
+  // The pooled interval must stay on the automatic axis: no arrowheads.
+  const arrows = await win.evaluate(() =>
+    [...document.querySelectorAll('svg g path')].filter((p) => /Z$/.test(p.getAttribute('d')) &&
+      p.getAttribute('d').split('L').length === 3).length);
+  assert.strictEqual(arrows, 0, 'something ran off the automatic axis');
+
+  await win.locator('label').filter({ hasText: 'Meta-analysis Mode' }).locator('input').uncheck();
+  await win.waitForTimeout(400);
+});
+
+test('axis labels around 1 are distinct, and negative section spacing tightens', async () => {
+  await win.locator('input[accept=".json"]').setInputFiles(path.join(fixtureDir, 'near-one.json'));
+  await win.waitForTimeout(1500);
+
+  const tickLabels = await win.evaluate(() => [...document.querySelectorAll('svg text')]
+    .map((t) => t.textContent).filter((t) => /^\d+(\.\d+)?$/.test(t)));
+  assert.ok(tickLabels.length >= 3, `ticks: ${JSON.stringify(tickLabels)}`);
+  assert.strictEqual(new Set(tickLabels).size, tickLabels.length, `ticks: ${JSON.stringify(tickLabels)}`);
+  assert.ok(tickLabels.includes('1'), `ticks: ${JSON.stringify(tickLabels)}`);
+
+  const rowAY = () => win.evaluate(() => Number([...document.querySelectorAll('svg text')]
+    .find((t) => t.textContent === 'Row A').getAttribute('y')));
+  const spacing = win.locator('label:has-text("Space After Section Title") + input');
+  await spacing.fill('0');
+  await win.waitForTimeout(500);
+  const atZero = await rowAY();
+  await spacing.fill('-10');
+  await win.waitForTimeout(500);
+  const atMinusTen = await rowAY();
+  assert.ok(atMinusTen < atZero, `row A at ${atMinusTen} with -10 vs ${atZero} with 0`);
+});
+
+test('the window cannot be navigated away from the app', async () => {
+  // Dropping a file outside an input used to navigate the window to it,
+  // replacing the app and discarding every unsaved plot.
+  const target = pathToFileURL(path.join(fixtureDir, 'swapped.csv')).href;
+  await win.evaluate((url) => { window.__stillHere = true; window.location.href = url; }, target);
+  await win.waitForTimeout(1500);
+  assert.ok(win.url().endsWith('/index.html'), `the window moved to ${win.url()}`);
+  assert.strictEqual(await win.evaluate(() => window.__stillHere), true);
+
+  await win.evaluate(() => { window.open('file:///'); });
+  await win.waitForTimeout(800);
+  assert.strictEqual(app.windows().filter((w) => w.url().startsWith('file:')).length, 1,
+    'a second window was opened');
+});
+
+// Runs last among the UI tests: it resets the page.
+test('reloading, the crash screen\'s way out, still works', async () => {
+  await win.evaluate(() => { window.__beforeReload = true; window.location.reload(); });
+  await win.waitForTimeout(2500);
+  const state = await win.evaluate(() => ({
+    marker: window.__beforeReload,
+    heading: (document.querySelector('h1') || {}).textContent
+  }));
+  assert.strictEqual(state.marker, undefined, 'the page did not reload');
+  assert.strictEqual(state.heading, 'Forest Plot Generator');
+});
+
 test('nothing logged an unexpected error along the way', () => {
-  // The rejected-project test deliberately provokes one console.error; anything
-  // else is a real fault.
-  const expected = /Load error:.*(no plots|not look like a Forest Plot)/;
+  // The rejected-project and corrupt-spreadsheet tests deliberately provoke
+  // console.errors; anything else is a real fault.
+  const expected = /Load error:.*(no plots|not look like a Forest Plot)|File upload error:.*Major Version/;
   const unexpected = consoleErrors.filter((e) => !expected.test(e));
   assert.deepStrictEqual(unexpected, []);
   assert.ok(consoleErrors.some((e) => expected.test(e)),

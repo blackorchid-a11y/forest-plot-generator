@@ -2,11 +2,13 @@ const { useState, useRef, useEffect } = React;
 
 // Pure logic lives in lib/core.js so it can be unit tested under Node.
 const {
-  computePooledEffect, isSignificant, isValidData, scaleValue,
+  computePooledEffect, describeHeterogeneity, poolingModelLabel, isSignificant, isValidData, scaleValue,
+  computeAutoAxis, generateSmartTicks, formatTickLabel,
   formatNumber, formatEstimate, formatPValue,
   parseNumericInput, toNumber,
-  buildRow, buildRowsFromRecords, describeMapping,
-  validateProject, sortRowsByPosition, groupRowsIntoSections
+  buildRowsFromRecords, buildRowsWithMapping, describeImportProblems, describeMapping,
+  resolveColumns,
+  normalizeSettings, validateProject, sortRowsByPosition, groupRowsIntoSections
 } = ForestPlotCore;
 
 // Every plot's settings start from these. Projects written by older versions
@@ -19,6 +21,7 @@ const DEFAULT_PLOT_SETTINGS = {
   groupTitleFontSize: 16,
   showGridlines: false,
   metaAnalysis: false,
+  poolingModel: 'fixed', // 'fixed' or 'random' (DerSimonian-Laird)
   showPValues: false,
   alignVariablesLeft: false,
   title: 'Forest Plot', // Subtitle for this plot
@@ -31,6 +34,29 @@ const DEFAULT_PLOT_SETTINGS = {
   xAxisMax: '',
   xAxisTicks: ''
 };
+
+const DEFAULT_GLOBAL_SETTINGS = {
+  mainTitle: 'Forest Plot',
+  layout: 'vertical', // 'vertical' or 'horizontal'
+  plotWidth: 800,
+  plotHeight: 600
+};
+
+const PROJECT_FILE_VERSION = '2.0';
+
+// The project as of the last successful render, kept outside React so the
+// crash screen can still offer it after the editor has been torn down.
+let lastGoodProject = null;
+
+function downloadProjectFile(project, filename) {
+  const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 // Comprehensive color palette
 const COLOR_PALETTE = [
@@ -125,6 +151,10 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
     group: ''
   });
 
+  // Every keystroke in the range fields asks for a new preview, and replies can
+  // arrive out of order; only the newest request may update the preview.
+  const previewRequest = useRef(0);
+
   useEffect(() => {
     if (excelData && selectedSheet) {
       generatePreview();
@@ -132,12 +162,13 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
   }, [selectedSheet, cellRange, hasHeaders]);
 
   const generatePreview = async () => {
+    const request = ++previewRequest.current;
     try {
       const { rows } = await readSheetRows(excelData.handle, selectedSheet, cellRange, hasHeaders);
-      setPreviewData(rows.slice(0, 5));
+      if (request === previewRequest.current) setPreviewData(rows.slice(0, 5));
     } catch (error) {
       console.error('Preview error:', error);
-      setPreviewData([]);
+      if (request === previewRequest.current) setPreviewData([]);
     }
   };
 
@@ -146,20 +177,45 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
     return Object.keys(previewData[0]);
   };
 
+  // When the columns change (another sheet, range, or the headers box), the
+  // old choices may name columns that no longer exist. Start again from the
+  // ones recognised by name, which also spares mapping every field by hand.
+  const columnsKey = JSON.stringify(getColumns());
+  useEffect(() => {
+    const columns = getColumns();
+    const { mapping, matchedByName } = resolveColumns(columns);
+    const next = {};
+    Object.keys(columnMapping).forEach((field) => {
+      next[field] = matchedByName[field] ? mapping[field] : '';
+    });
+    setColumnMapping(next);
+  }, [columnsKey]);
+
+  const chooseSheet = async (sheet) => {
+    try {
+      const range = await sheetUsedRange(excelData.handle, sheet);
+      setSelectedSheet(sheet);
+      setCellRange(range);
+      setStep(2);
+    } catch (error) {
+      console.error('Sheet error:', error);
+      alert(`Could not read sheet "${sheet}": ${error.message}`);
+    }
+  };
+
   const importData = async () => {
     try {
       const { rows, truncated } = await readSheetRows(excelData.handle, selectedSheet, cellRange, hasHeaders);
 
+      if (rows.length === 0) {
+        alert('There are no data rows in that range, so nothing was imported.');
+        return;
+      }
+
       // The wizard's own mapping wins; unreadable cells become null rather than
       // a plausible default, and are reported back to the user.
-      let unreadableCount = 0;
-      const parsed = rows.map((row, idx) => {
-        const built = buildRow(row, columnMapping, idx);
-        if (built.unreadable) unreadableCount += 1;
-        return built.row;
-      });
-
-      onImport(parsed, selectedSheet, unreadableCount, truncated);
+      const built = buildRowsWithMapping(rows, columnMapping);
+      onImport(built.rows, selectedSheet, { ...built, truncated });
     } catch (error) {
       console.error('Import error:', error);
       alert('Error importing data: ' + error.message);
@@ -197,11 +253,7 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
           excelData?.sheets.map(sheet =>
             React.createElement('button', {
               key: sheet,
-              onClick: async () => {
-                setSelectedSheet(sheet);
-                setCellRange(await sheetUsedRange(excelData.handle, sheet));
-                setStep(2);
-              },
+              onClick: () => chooseSheet(sheet),
               className: 'w-full p-4 border rounded hover:bg-blue-50 text-left font-medium'
             }, sheet)
           )
@@ -339,12 +391,7 @@ function ForestPlotGenerator() {
   const [inputMode, setInputMode] = useState('manual');
 
   // Global settings for the entire project
-  const [globalSettings, setGlobalSettings] = useState({
-    mainTitle: 'Forest Plot',
-    layout: 'vertical', // 'vertical' or 'horizontal'
-    plotWidth: 800,
-    plotHeight: 600
-  });
+  const [globalSettings, setGlobalSettings] = useState({ ...DEFAULT_GLOBAL_SETTINGS });
 
   // Array of plots, each with its own data and settings
   const [plots, setPlots] = useState([
@@ -388,6 +435,13 @@ function ForestPlotGenerator() {
   };
 
   const svgRef = useRef(null);
+
+  // Effects run only after a render has committed, so this always holds a
+  // project that rendered. If the next change crashes the editor, the crash
+  // screen can hand back the work as it was just before.
+  useEffect(() => {
+    lastGoodProject = { version: PROJECT_FILE_VERSION, plots, globalSettings };
+  }, [plots, globalSettings]);
 
   const addPlot = () => {
     const newId = Math.max(...plots.map(p => p.id), 0) + 1;
@@ -459,21 +513,19 @@ function ForestPlotGenerator() {
     updateActivePlot({ data: newData });
   };
 
-  const handleExcelImport = (parsed, sheetName, unreadableCount = 0, truncated = false) => {
+  const handleExcelImport = (parsed, sheetName, summary = {}) => {
     updateActivePlot({ data: parsed });
     if (excelData && window.xlsxBridge) window.xlsxBridge.close(excelData.handle);
     setShowExcelImport(false);
     setExcelData(null);
+    const problems = describeImportProblems(summary);
     alert(
       `Imported ${parsed.length} rows from ${sheetName}.` +
-      (truncated
+      (summary.truncated
         ? '\n\nThe requested range was larger than the sheet, so only the part ' +
           'containing data was read.'
         : '') +
-      (unreadableCount > 0
-        ? `\n\n${unreadableCount} row(s) had values that could not be read; ` +
-          'those fields were left empty and will not be plotted.'
-        : '')
+      (problems ? `\n\n${problems}` : '')
     );
   };
 
@@ -502,18 +554,25 @@ function ForestPlotGenerator() {
               // order only for headers that cannot be recognised. Mapping by
               // position alone silently swapped OR and lower CI in any file
               // that did not use the expected column order.
-              const { rows, mapping, matchedByName, unreadableCount } =
-                buildRowsFromRecords(rawData, headers);
+              const built = buildRowsFromRecords(rawData, headers);
 
-              updateActivePlot({ data: rows });
+              // An empty or header-only file must not wipe the current plot.
+              if (built.rows.length === 0) {
+                alert('No data rows were found in this CSV file, so nothing was imported.');
+                return;
+              }
+
+              const malformedLineCount = new Set(
+                (results.errors || []).map((error) => error.row)
+              ).size;
+              const problems = describeImportProblems({ ...built, malformedLineCount });
+
+              updateActivePlot({ data: built.rows });
               setInputMode('manual');
               alert(
-                `Imported ${rows.length} rows from CSV.\n\nColumns used:\n` +
-                describeMapping(mapping, matchedByName) +
-                (unreadableCount > 0
-                  ? `\n\n${unreadableCount} row(s) had values that could not be read; ` +
-                    'those fields were left empty and will not be plotted.'
-                  : '')
+                `Imported ${built.rows.length} rows from CSV.\n\nColumns used:\n` +
+                describeMapping(built.mapping, built.matchedByName) +
+                (problems ? `\n\n${problems}` : '')
               );
             } catch (error) {
               console.error('CSV parsing error:', error);
@@ -544,84 +603,18 @@ function ForestPlotGenerator() {
     e.target.value = '';
   };
 
+  // " p=0.03" (or " p<0.001") when p-values are shown and the row has one; a
+  // row without a p-value used to end in a dangling "p=", and a tiny one read
+  // "p=<0.001".
+  const pValueSuffixFor = (showPValues) => (pValue) => {
+    const text = formatPValue(pValue);
+    if (!showPValues || !text) return '';
+    return text.startsWith('<') ? ` p${text}` : ` p=${text}`;
+  };
+
   const getBarColor = (row) => {
     if (row.color !== 'auto') return row.color;
     return isSignificant(row.lowerCI, row.upperCI) ? '#000000' : '#808080';
-  };
-
-  // Generate smart tick marks based on data range
-  const generateSmartTicks = (minVal, maxVal, scale) => {
-    // A non-finite bound used to spin the loop below forever, freezing the app
-    // with no way back: Math.pow(10, power) saturates at Infinity and
-    // Infinity <= Infinity never ends the loop. Validation rejects such input
-    // before we get here, but the loop is also made structurally finite so no
-    // future caller can wedge it.
-    if (!Number.isFinite(minVal) || !Number.isFinite(maxVal)) return [];
-    const MAX_TICKS = 1000;
-
-    if (scale === 'log') {
-      // For log scale, use powers and half-powers
-      const logMin = Math.log10(minVal);
-      const ticks = [];
-
-      // Generate major ticks at powers of 10
-      let power = Math.floor(logMin);
-      while (Math.pow(10, power) <= maxVal * 1.1 && ticks.length < MAX_TICKS) {
-        const val = Math.pow(10, power);
-        if (val >= minVal * 0.9) {
-          ticks.push(val);
-        }
-        power++;
-      }
-
-      // Add intermediate ticks (0.5, 2, 5 pattern)
-      const intermediate = [];
-      for (let i = 0; i < ticks.length - 1; i++) {
-        const start = ticks[i];
-        const end = ticks[i + 1];
-        if (start * 2 < end && start * 2 >= minVal * 0.9 && start * 2 <= maxVal * 1.1) {
-          intermediate.push(start * 2);
-        }
-        if (start * 5 < end && start * 5 >= minVal * 0.9 && start * 5 <= maxVal * 1.1) {
-          intermediate.push(start * 5);
-        }
-      }
-
-      return [...ticks, ...intermediate].sort((a, b) => a - b).filter(v => v >= minVal * 0.9 && v <= maxVal * 1.1);
-    } else {
-      // For linear scale
-      const range = maxVal - minVal;
-      let step;
-
-      // Determine nice step size
-      const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
-      const normalized = range / magnitude;
-
-      if (normalized < 1.5) step = 0.2 * magnitude;
-      else if (normalized < 3) step = 0.5 * magnitude;
-      else if (normalized < 7) step = 1 * magnitude;
-      else step = 2 * magnitude;
-
-      // A zero or non-finite step would never advance the loop below. That is
-      // reachable from a zero range: Math.log10(0) is -Infinity, so magnitude
-      // and therefore step come out as 0.
-      if (!Number.isFinite(step) || step <= 0) return [minVal, maxVal];
-
-      const ticks = [];
-      let tick = Math.ceil(minVal / step) * step;
-      while (tick <= maxVal && ticks.length < MAX_TICKS) {
-        ticks.push(tick);
-        tick += step;
-      }
-
-      // Always include 1.0 if it's in range
-      if (minVal < 1.0 && maxVal > 1.0 && !ticks.includes(1.0)) {
-        ticks.push(1.0);
-        ticks.sort((a, b) => a - b);
-      }
-
-      return ticks;
-    }
   };
 
   const downloadSVG = () => {
@@ -687,18 +680,7 @@ function ForestPlotGenerator() {
   };
 
   const saveProject = () => {
-    const project = {
-      version: '2.0',
-      plots,
-      globalSettings
-    };
-    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'forest-plot-project.json';
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadProjectFile({ version: PROJECT_FILE_VERSION, plots, globalSettings }, 'forest-plot-project.json');
   };
 
   const loadProject = (e) => {
@@ -716,36 +698,31 @@ function ForestPlotGenerator() {
         const validated = validateProject(project);
 
         if (validated.kind === 'current') {
-          // Fill in any setting the saving version did not know about.
+          // Fill in any setting the saving version did not know about, and
+          // replace any of the wrong kind.
           setPlots(validated.plots.map((plot) => ({
             ...plot,
-            settings: { ...DEFAULT_PLOT_SETTINGS, ...plot.settings }
+            settings: normalizeSettings(plot.settings, DEFAULT_PLOT_SETTINGS)
           })));
           if (validated.globalSettings) {
-            setGlobalSettings(validated.globalSettings);
+            setGlobalSettings(normalizeSettings(validated.globalSettings, DEFAULT_GLOBAL_SETTINGS));
           }
           setActivePlotId(validated.plots[0].id);
         } else {
-          // Add position field if missing (backward compatibility)
-          const dataWithPositions = validated.data.map((row, idx) => ({
-            ...row,
-            position: row.position !== undefined ? row.position : idx + 1
-          }));
-
+          // Rows already carry positions (validateProject fills them in).
           const legacySettings = validated.settings;
-          const newSettings = { ...DEFAULT_PLOT_SETTINGS, ...legacySettings };
+          const newSettings = normalizeSettings(legacySettings, DEFAULT_PLOT_SETTINGS);
 
-          const newGlobalSettings = {
+          const newGlobalSettings = normalizeSettings({
             mainTitle: legacySettings.title || 'Forest Plot',
-            layout: 'vertical',
             plotWidth: legacySettings.plotWidth || 800,
             plotHeight: legacySettings.plotHeight || 600
-          };
+          }, DEFAULT_GLOBAL_SETTINGS);
 
           setPlots([{
             id: 1,
             title: 'Plot 1',
-            data: dataWithPositions,
+            data: validated.data,
             settings: newSettings
           }]);
           setGlobalSettings(newGlobalSettings);
@@ -814,7 +791,9 @@ function ForestPlotGenerator() {
       groupTitleFontSize: toNumber(plotSettings.groupTitleFontSize, 16, 1),
       groupSpacing: toNumber(plotSettings.groupSpacing, 30, 0),
       spacingBeforeGroupTitle: toNumber(plotSettings.spacingBeforeGroupTitle, 20, 0),
-      spacingAfterGroupTitle: toNumber(plotSettings.spacingAfterGroupTitle, 5, 0)
+      // This one is allowed below zero: the input offers down to -20 for tight
+      // layouts, and flooring it at 0 silently swapped -10 for the default 5.
+      spacingAfterGroupTitle: toNumber(plotSettings.spacingAfterGroupTitle, 5, -20)
     };
 
     // CRASH FIX v2.2.3: Validate manual X-axis settings before rendering
@@ -895,9 +874,22 @@ function ForestPlotGenerator() {
       // But for individual plots in a multi-plot setup, we might want to adjust
       const plotWidth = plotWidthPx - margin.left - margin.right;
       const plotHeight = plotHeightPx - margin.top - margin.bottom;
+      // Axis labels and the footnote sit a little below the body text; a font
+      // size of 1 or 2 would otherwise give them a zero or negative size.
+      const smallFontSize = Math.max(1, plotSettings.fontSize - 2);
+      const pValueSuffix = pValueSuffixFor(plotSettings.showPValues);
 
       const validData = plotData.filter(d => isValidData(d));
+      // The pooled estimate is needed up front: a random-effects interval can
+      // be wider than every study's, so the automatic axis must include it, and
+      // its heterogeneity line takes a row slot of its own.
+      const pooled = plotSettings.metaAnalysis
+        ? computePooledEffect(validData, plotSettings.poolingModel === 'random' ? 'random' : 'fixed')
+        : null;
+      const heterogeneityText = describeHeterogeneity(pooled);
+
       const allValues = validData.flatMap(d => [d.lowerCI, d.or, d.upperCI]);
+      if (pooled) allValues.push(pooled.lowerCI, pooled.upperCI);
 
       // Determine X-axis range
       let minVal, maxVal;
@@ -905,30 +897,8 @@ function ForestPlotGenerator() {
         minVal = parseFloat(plotSettings.xAxisMin);
         maxVal = parseFloat(plotSettings.xAxisMax);
       } else {
-        // Auto mode - better calculation
-        if (allValues.length === 0) {
-          minVal = 0.1;
-          maxVal = 10;
-        } else {
-          const dataMin = Math.min(...allValues);
-          const dataMax = Math.max(...allValues);
-          const range = dataMax - dataMin;
-
-          // Add 15% padding on each side for better visualization
-          const padding = range * 0.15;
-          minVal = Math.max(0.01, dataMin - padding);
-          maxVal = dataMax + padding;
-
-          // Round to nice numbers
-          if (plotSettings.scale === 'log') {
-            minVal = Math.pow(10, Math.floor(Math.log10(minVal)));
-            maxVal = Math.pow(10, Math.ceil(Math.log10(maxVal)));
-          } else {
-            const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
-            minVal = Math.floor(minVal / magnitude) * magnitude;
-            maxVal = Math.ceil(maxVal / magnitude) * magnitude;
-          }
-        }
+        // Auto mode: the whole data range, always including the line of no effect.
+        ({ min: minVal, max: maxVal } = computeAutoAxis(allValues, plotSettings.scale));
       }
 
       // Every drawn x goes through this first: an estimate or a limit outside the
@@ -959,6 +929,7 @@ function ForestPlotGenerator() {
       // Calculate total data rows (excluding section headers)
       let totalDataRows = plotData.length;
       if (plotSettings.metaAnalysis) totalDataRows += 1;
+      if (heterogeneityText) totalDataRows += 1;
 
       // Calculate total height used by headers and spacing
       let totalHeaderHeight = 0;
@@ -1010,8 +981,9 @@ function ForestPlotGenerator() {
         }, 'OR (95% CI)')
       );
 
-      // Vertical line at OR=1 (only if 1 is in range)
-      if (minVal < 1.0 && maxVal > 1.0) {
+      // Vertical line at OR=1 (only if 1 is on the axis; a log axis often starts
+      // exactly at 1, which a strict comparison used to leave without the line)
+      if (minVal <= 1 && maxVal >= 1) {
         elements.push(
           React.createElement('line', {
             key: 'vertical-line',
@@ -1166,9 +1138,8 @@ function ForestPlotGenerator() {
                   x: plotWidthPx - margin.right + 10,
                   y: y + 5,
                   textAnchor: 'start'
-                }, plotSettings.showPValues ?
-                  `${formatNumber(row.or)} (${formatNumber(row.lowerCI)}-${formatNumber(row.upperCI)}) p=${formatPValue(row.pValue)}` :
-                  `${formatNumber(row.or)} (${formatNumber(row.lowerCI)}-${formatNumber(row.upperCI)})`
+                }, `${formatNumber(row.or)} (${formatNumber(row.lowerCI)}-${formatNumber(row.upperCI)})` +
+                  pValueSuffix(row.pValue)
                 )
               )
             );
@@ -1180,8 +1151,6 @@ function ForestPlotGenerator() {
 
       // Meta-analysis pooled effect
       if (plotSettings.metaAnalysis) {
-        const validDataForMeta = plotData.filter(d => isValidData(d));
-        const pooled = computePooledEffect(validDataForMeta);
         if (pooled) {
           const pooledOR = pooled.or;
           const pooledLower = pooled.lowerCI;
@@ -1205,7 +1174,7 @@ function ForestPlotGenerator() {
                 y: y + 5,
                 textAnchor: plotSettings.alignVariablesLeft ? 'start' : 'end',
                 fontWeight: 'bold'
-              }, 'Pooled Effect'),
+              }, poolingModelLabel(pooled.model)),
 
               React.createElement('path', {
                 key: 'pooled-diamond',
@@ -1232,10 +1201,20 @@ function ForestPlotGenerator() {
                 y: y + 5,
                 textAnchor: 'start',
                 fontWeight: 'bold'
-              }, plotSettings.showPValues ?
-                `${formatEstimate(pooledOR)} (${formatEstimate(pooledLower)}-${formatEstimate(pooledUpper)}) p=${formatPValue(pooled.pValue)}` :
-                `${formatEstimate(pooledOR)} (${formatEstimate(pooledLower)}-${formatEstimate(pooledUpper)})`
-              )
+              }, `${formatEstimate(pooledOR)} (${formatEstimate(pooledLower)}-${formatEstimate(pooledUpper)})` +
+                pValueSuffix(pooled.pValue)
+              ),
+
+              // Starts at the left edge and runs under the empty plot area: it is
+              // too long for the label column.
+              heterogeneityText ? React.createElement('text', {
+                key: 'heterogeneity',
+                x: 10,
+                y: y + baseRowHeight + 5,
+                textAnchor: 'start',
+                fontSize: smallFontSize,
+                fontStyle: 'italic'
+              }, heterogeneityText) : null
             )
           );
         }
@@ -1243,18 +1222,14 @@ function ForestPlotGenerator() {
 
       // X-axis labels
       tickValues.forEach((val, idx) => {
-        const displayVal = plotSettings.scale === 'log' ?
-          (val >= 1 ? val.toFixed(0) : val.toFixed(2)) :
-          (val >= 10 ? val.toFixed(0) : val.toFixed(1));
-
         elements.push(
           React.createElement('text', {
             key: `xaxis-${idx}`,
             x: xScale(val),
             y: plotHeightPx - margin.bottom + 20,
             textAnchor: 'middle',
-            fontSize: plotSettings.fontSize - 2
-          }, displayVal)
+            fontSize: smallFontSize
+          }, formatTickLabel(val))
         );
       });
 
@@ -1265,7 +1240,7 @@ function ForestPlotGenerator() {
           x: margin.left + plotWidth / 2,
           y: plotHeightPx - 20,
           textAnchor: 'middle',
-          fontSize: plotSettings.fontSize - 2,
+          fontSize: smallFontSize,
           fontStyle: 'italic'
         }, plotSettings.footnote)
       );
@@ -1698,6 +1673,17 @@ function ForestPlotGenerator() {
                 }),
                 React.createElement('span', { className: 'font-semibold' }, 'Meta-analysis Mode')
               ),
+              settings.metaAnalysis && React.createElement('label', { className: 'flex items-center gap-2 mt-2 ml-6' },
+                React.createElement('span', null, 'Model'),
+                React.createElement('select', {
+                  value: settings.poolingModel,
+                  onChange: (e) => updateActiveSettings({ poolingModel: e.target.value }),
+                  className: 'px-2 py-1 border rounded'
+                },
+                  React.createElement('option', { value: 'fixed' }, 'Fixed effect (inverse variance)'),
+                  React.createElement('option', { value: 'random' }, 'Random effects (DerSimonian-Laird)')
+                )
+              ),
               React.createElement('label', { className: 'flex items-center gap-2 mt-2' },
                 React.createElement('input', {
                   type: 'checkbox',
@@ -1833,18 +1819,30 @@ class ErrorBoundary extends React.Component {
   render() {
     if (!this.state.error) return this.props.children;
 
+    // The editor is gone at this point, and with it any unsaved work -- except
+    // the copy kept in lastGoodProject. Say so plainly and offer it first.
     return React.createElement('div', { className: 'min-h-screen bg-gray-50 p-8' },
       React.createElement('div', { className: 'max-w-2xl mx-auto bg-white border border-red-300 rounded-lg p-6' },
         React.createElement('h1', { className: 'text-2xl font-bold text-red-600 mb-3' },
           'Something went wrong'),
         React.createElement('p', { className: 'mb-3' },
-          'The plot could not be rendered. Your last action has not been applied.'),
+          'The editor hit an error and had to stop. ' +
+          (lastGoodProject
+            ? 'Download a backup of your work as it was just before the error, ' +
+              'then start over and load the backup with Load Project.'
+            : 'Starting over will clear anything that has not been saved.')),
         React.createElement('p', { className: 'mb-4 text-sm font-mono bg-red-50 p-3 rounded break-words' },
           String(this.state.error && this.state.error.message)),
-        React.createElement('button', {
-          className: 'px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700',
-          onClick: () => window.location.reload()
-        }, 'Start a blank project')
+        React.createElement('div', { className: 'flex flex-wrap gap-2' },
+          lastGoodProject && React.createElement('button', {
+            className: 'px-4 py-2 rounded bg-purple-600 text-white hover:bg-purple-700',
+            onClick: () => downloadProjectFile(lastGoodProject, 'forest-plot-backup.json')
+          }, 'Download backup'),
+          React.createElement('button', {
+            className: 'px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700',
+            onClick: () => window.location.reload()
+          }, 'Start a blank project')
+        )
       )
     );
   }

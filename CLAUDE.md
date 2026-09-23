@@ -8,7 +8,10 @@ This is an Electron desktop application that generates professional forest plots
 - **React** 18 - UI framework (bundled in `vendor/`, not a CDN)
 - **Tailwind CSS** - Styling (a static stylesheet built by the CLI into `vendor/tailwind.css`)
 - **PapaParse** - CSV parsing (bundled in `vendor/`)
-- **SheetJS (XLSX)** - Excel parsing, in the main process only
+- **SheetJS (XLSX)** 0.20.3 - Excel parsing, in an isolated utility process
+  (`xlsx-worker.js`). Installed through the npm alias `xlsx` → `@e965/xlsx`, since
+  SheetJS publishes 0.20.x only on its CDN; do not "upgrade" back to npm's `xlsx@0.18.5`,
+  which has known CVEs
 
 All runtime libraries are bundled locally so the app works with no network
 access. Nothing is fetched from a CDN at runtime; do not reintroduce one.
@@ -17,6 +20,7 @@ access. Nothing is fetched from a CDN at runtime; do not reintroduce one.
 ```
 forest-plot-app/
 ├── main.js           # Electron main process + spreadsheet IPC handlers
+├── xlsx-worker.js    # Utility process that parses one spreadsheet (SheetJS)
 ├── preload.js        # contextBridge: the renderer's only privileged API
 ├── index.html        # HTML entry point (loads vendor/ and lib/ scripts)
 ├── app.js            # React application code (renderer, no Node access)
@@ -30,7 +34,10 @@ forest-plot-app/
 ```
 
 ## Key Files
-- **main.js**: Electron main process: creates the window and owns all spreadsheet parsing
+- **main.js**: Electron main process: creates the window, blocks navigation away from
+  the app, and runs one `xlsx-worker.js` utility process per open spreadsheet (with
+  timeouts)
+- **xlsx-worker.js**: holds a workbook and answers `open` / `usedRange` / `readRows`
 - **index.html**: HTML template that loads the bundled libraries from `vendor/` and `lib/`, and declares the CSP
 - **app.js**: Contains the React application (forest plot generator UI and logic)
 - **package.json**: Project metadata, dependencies, and electron-builder configuration
@@ -54,7 +61,8 @@ On a headless machine, run the smoke test under a virtual display:
 1. Most UI changes go in `app.js`
 2. Pure logic (statistics, formatting, parsing, validation) goes in `lib/core.js`
    so it can be unit tested; `app.js` reads it from the `ForestPlotCore` global
-3. Electron configuration and spreadsheet IPC go in `main.js`
+3. Electron configuration and spreadsheet IPC go in `main.js`; spreadsheet parsing
+   itself goes in `xlsx-worker.js`
 4. Anything the renderer needs from Node must be exposed in `preload.js`
 5. HTML structure changes go in `index.html`
 6. Build config changes go in `package.json`
@@ -92,13 +100,15 @@ npm install
 ## Code Conventions
 - **React**: Uses functional components with hooks
 - **Styling**: Tailwind utility classes
-- **File handling**: PapaParse for CSV in the renderer; XLSX for Excel in the main process, reached through `window.xlsxBridge`
+- **File handling**: PapaParse for CSV in the renderer; XLSX for Excel in `xlsx-worker.js`, reached through `window.xlsxBridge` → `main.js` IPC
 - **Icons**: plain text/emoji in the markup; there is no icon library
 
 ## Important Notes
 - The renderer is sandboxed: `contextIsolation: true`, `nodeIntegration: false`.
   It has no `require`, `process` or `Buffer`. Anything privileged goes through
   the `xlsxBridge` in `preload.js`, backed by IPC handlers in `main.js`
+- The window may not navigate anywhere except a reload of itself (`will-navigate`
+  in `main.js`); a dropped file used to replace the app
 - `index.html` declares a CSP; inline `<script>` will not run
 - All external libraries are bundled in `vendor/`
 - The window starts maximized with the menu bar hidden (the menu is still set,

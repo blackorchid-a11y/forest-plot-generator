@@ -28,13 +28,14 @@ const nodeGlobals = {
   Buffer: 'readonly',
   globalThis: 'readonly',
   console: 'readonly',
-  setTimeout: 'readonly'
+  setTimeout: 'readonly',
+  clearTimeout: 'readonly'
 };
 
 module.exports = [
   {
-    // Main process, preload and tests run under Node.
-    files: ['main.js', 'preload.js', 'test/unit/**/*.js', 'eslint.config.js', 'tailwind.config.js'],
+    // Main process, the spreadsheet worker, preload and tests run under Node.
+    files: ['main.js', 'xlsx-worker.js', 'preload.js', 'test/unit/**/*.js', 'eslint.config.js', 'tailwind.config.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',

@@ -1,6 +1,34 @@
-# Forest Plot Generator v3.1.0
+# Forest Plot Generator v3.2.0
 
 A professional desktop application for generating publication-ready forest plots with **multi-plot support**, advanced customization options, and smart axis controls.
+
+## 🌟 What's New in v3.2.0
+
+### New: random-effects meta-analysis
+- Under **Meta-analysis Mode**, choose the pooling **Model**: fixed effect (inverse
+  variance, as before) or **random effects (DerSimonian–Laird)**, which allows the true
+  effect to vary between studies.
+- With two or more studies, a **heterogeneity line** reports I², the Cochran's Q p-value
+  and, for random effects, τ². Existing projects keep fixed effect.
+
+### Fixed: plots
+- **Axis labels show their real values.** An axis around 1 printed 0.95 as "1.0" next to
+  the real 1.0; small log ticks printed "0.00".
+- **The automatic axis never cuts off data** and always shows the line of no effect.
+  Ratios below 0.01 used to be pinned to the edge, or even flip the axis.
+- **Negative "Space After Section Title" works again** (3.1.0 quietly turned it into 5).
+
+### Fixed: imports and safety
+- **Dropping a file on the window no longer replaces the app** and loses unsaved work.
+- **Excel files are read by an updated SheetJS in an isolated process**, closing two
+  known vulnerabilities in the old version and stopping a bad file from freezing the app.
+- European p-values (`0,025`) are read, more CI column names are recognised, unreadable
+  p-values are reported, and an empty file no longer wipes your data.
+- If the editor ever crashes, the error screen lets you **download a backup** of your work.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
+---
 
 ## 🌟 What's New in v3.1.0
 
@@ -101,10 +129,10 @@ Perfect for:
 ### Smart Axis Controls
 
 #### Automatic Mode (Recommended)
-- Intelligent range calculation with 15% padding
-- Smart tick mark generation
+- Covers all of the data and the pooled interval, never clipping a value
+- Always includes the line of no effect (1)
+- Tick labels show each tick's exact value
 - Optimized for both linear and logarithmic scales
-- Always includes OR=1.0 when relevant
 - Crash-proof with comprehensive validation
 
 #### Manual Mode
@@ -117,7 +145,9 @@ Perfect for:
 ### Visualization Options
 - **Scale Types**: Linear or Logarithmic
 - **Gridlines**: Optional dashed gridlines at tick marks
-- **Meta-Analysis Mode**: Display pooled effect with diamond marker
+- **Meta-Analysis Mode**: Display the pooled effect with a diamond marker, pooled by a
+  fixed-effect (inverse variance) or random-effects (DerSimonian–Laird) model, with a
+  heterogeneity line (I², Cochran's Q p-value, and τ² for random effects)
 - **Custom Dimensions**: Adjustable plot width and height per plot
 - **Font Selection**: 6 professional fonts available
 - **Adjustable Font Size**: Fine-tune text sizing for each plot
@@ -133,7 +163,7 @@ Perfect for:
 ## 🚀 Getting Started
 
 ### Installation
-1. Download the latest release (v3.1.0)
+1. Download the latest release (v3.2.0)
 2. Run the installer (Windows or macOS)
 3. Launch Forest Plot Generator
 
@@ -179,7 +209,13 @@ Perfect for:
 - Cells that cannot be read as numbers are **left empty**, never guessed. The import tells
   you how many rows were affected, and such rows are excluded from the plot rather than
   plotted as a false result.
-- A comma decimal separator (`1,52`) is understood.
+- A comma decimal separator (`1,52`, `0,025`) is understood. A lone comma followed by
+  three digits after a non-zero number (`1,520`) is ambiguous and is not guessed.
+- Confidence limits are recognised under many spellings: `Lower CI`, `Lower 95% CI`,
+  `95% CI lower`, `LCL`, `LL`/`UL`, and so on. The Excel wizard pre-selects every column
+  it recognises.
+- A p-value that cannot be read (`ns`, `<0.05`) is left empty and reported.
+- A file with no data rows is refused rather than replacing your current data.
 
 ### Excel/CSV Format Example
 ```
@@ -252,6 +288,17 @@ Create complex figures with multiple plots:
 - **Global Settings**: Control main title and layout for all plots
 - **Independent Settings**: Each plot has its own data, colors, fonts, axes
 
+### Meta-Analysis
+Tick **Meta-analysis Mode** to add a pooled row, then choose the **Model**:
+- **Fixed effect (inverse variance)**: assumes one true effect shared by every study.
+- **Random effects (DerSimonian–Laird)**: allows the true effect to vary between
+  studies; its interval widens when they disagree.
+
+With two or more studies, a line under the pooled row reports heterogeneity: I² (the
+share of variation beyond chance), the p-value of Cochran's Q test, and τ² (the
+between-study variance, random effects only). The pooling assumes each row's interval
+is a 95% confidence interval for a ratio (OR, RR, HR).
+
 ### Section Grouping
 Group variables by category (e.g., mortality outcomes, morbidity outcomes, laboratory findings):
 - Displays section headers in bold
@@ -281,7 +328,7 @@ For precise control:
 ### P-Value Display
 Enable p-values to show statistical significance:
 - Format: "OR (95% CI) p=value"
-- Shows "p=<0.001" for very small p-values
+- Shows "p<0.001" for very small p-values; rows without a p-value show none
 - Displays exact values as entered
 - Automatic margin adjustment to fit text
 
@@ -361,7 +408,7 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 ### Troubleshooting
 - Check the FAQ section in NEW_FEATURES_v3.0.0.md
 - Review MIGRATION_GUIDE_v3.0.0.md for common issues
-- Ensure you're running the latest version (v3.1.0)
+- Ensure you're running the latest version (v3.2.0)
 
 ### Reporting Issues
 For bugs, questions, or feature requests:
@@ -397,7 +444,7 @@ Built with modern web technologies for a native desktop experience:
 
 ---
 
-**Version:** 3.1.0 - Correctness Release  
+**Version:** 3.2.0 - Random Effects Release  
 **Release Date:** September 2026  
 **Platform:** Windows & macOS  
 **Build:** Electron 28
@@ -416,7 +463,10 @@ npm run build          # Windows installer
 npm run build-mac      # macOS DMG
 ```
 
-All libraries are bundled in `vendor/`, so the app runs with no network access. If you
+All libraries are bundled in `vendor/`, so the app runs with no network access.
+Excel files are parsed in a separate utility process (`xlsx-worker.js`). SheetJS 0.20.3
+comes from the npm alias `xlsx` → `@e965/xlsx`, because SheetJS publishes 0.20.x only on
+its own CDN; see the CHANGELOG for the command to install it from there instead. If you
 add Tailwind classes, run `npm run build-css` to regenerate the stylesheet. CI runs the
 lint and both test suites before it will build an installer.
 
