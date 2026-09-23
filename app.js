@@ -3,6 +3,7 @@ const { useState, useRef, useEffect } = React;
 // Pure logic lives in lib/core.js so it can be unit tested under Node.
 const {
   computePooledEffect, isSignificant, isValidData, scaleValue,
+  computeAutoAxis, generateSmartTicks, formatTickLabel,
   formatNumber, formatEstimate, formatPValue,
   parseNumericInput, toNumber,
   buildRow, buildRowsFromRecords, describeMapping,
@@ -549,81 +550,6 @@ function ForestPlotGenerator() {
     return isSignificant(row.lowerCI, row.upperCI) ? '#000000' : '#808080';
   };
 
-  // Generate smart tick marks based on data range
-  const generateSmartTicks = (minVal, maxVal, scale) => {
-    // A non-finite bound used to spin the loop below forever, freezing the app
-    // with no way back: Math.pow(10, power) saturates at Infinity and
-    // Infinity <= Infinity never ends the loop. Validation rejects such input
-    // before we get here, but the loop is also made structurally finite so no
-    // future caller can wedge it.
-    if (!Number.isFinite(minVal) || !Number.isFinite(maxVal)) return [];
-    const MAX_TICKS = 1000;
-
-    if (scale === 'log') {
-      // For log scale, use powers and half-powers
-      const logMin = Math.log10(minVal);
-      const ticks = [];
-
-      // Generate major ticks at powers of 10
-      let power = Math.floor(logMin);
-      while (Math.pow(10, power) <= maxVal * 1.1 && ticks.length < MAX_TICKS) {
-        const val = Math.pow(10, power);
-        if (val >= minVal * 0.9) {
-          ticks.push(val);
-        }
-        power++;
-      }
-
-      // Add intermediate ticks (0.5, 2, 5 pattern)
-      const intermediate = [];
-      for (let i = 0; i < ticks.length - 1; i++) {
-        const start = ticks[i];
-        const end = ticks[i + 1];
-        if (start * 2 < end && start * 2 >= minVal * 0.9 && start * 2 <= maxVal * 1.1) {
-          intermediate.push(start * 2);
-        }
-        if (start * 5 < end && start * 5 >= minVal * 0.9 && start * 5 <= maxVal * 1.1) {
-          intermediate.push(start * 5);
-        }
-      }
-
-      return [...ticks, ...intermediate].sort((a, b) => a - b).filter(v => v >= minVal * 0.9 && v <= maxVal * 1.1);
-    } else {
-      // For linear scale
-      const range = maxVal - minVal;
-      let step;
-
-      // Determine nice step size
-      const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
-      const normalized = range / magnitude;
-
-      if (normalized < 1.5) step = 0.2 * magnitude;
-      else if (normalized < 3) step = 0.5 * magnitude;
-      else if (normalized < 7) step = 1 * magnitude;
-      else step = 2 * magnitude;
-
-      // A zero or non-finite step would never advance the loop below. That is
-      // reachable from a zero range: Math.log10(0) is -Infinity, so magnitude
-      // and therefore step come out as 0.
-      if (!Number.isFinite(step) || step <= 0) return [minVal, maxVal];
-
-      const ticks = [];
-      let tick = Math.ceil(minVal / step) * step;
-      while (tick <= maxVal && ticks.length < MAX_TICKS) {
-        ticks.push(tick);
-        tick += step;
-      }
-
-      // Always include 1.0 if it's in range
-      if (minVal < 1.0 && maxVal > 1.0 && !ticks.includes(1.0)) {
-        ticks.push(1.0);
-        ticks.sort((a, b) => a - b);
-      }
-
-      return ticks;
-    }
-  };
-
   const downloadSVG = () => {
     const svgElement = svgRef.current;
     const svgData = new XMLSerializer().serializeToString(svgElement);
@@ -897,6 +823,9 @@ function ForestPlotGenerator() {
       // But for individual plots in a multi-plot setup, we might want to adjust
       const plotWidth = plotWidthPx - margin.left - margin.right;
       const plotHeight = plotHeightPx - margin.top - margin.bottom;
+      // Axis labels and the footnote sit a little below the body text; a font
+      // size of 1 or 2 would otherwise give them a zero or negative size.
+      const smallFontSize = Math.max(1, plotSettings.fontSize - 2);
 
       const validData = plotData.filter(d => isValidData(d));
       const allValues = validData.flatMap(d => [d.lowerCI, d.or, d.upperCI]);
@@ -907,30 +836,8 @@ function ForestPlotGenerator() {
         minVal = parseFloat(plotSettings.xAxisMin);
         maxVal = parseFloat(plotSettings.xAxisMax);
       } else {
-        // Auto mode - better calculation
-        if (allValues.length === 0) {
-          minVal = 0.1;
-          maxVal = 10;
-        } else {
-          const dataMin = Math.min(...allValues);
-          const dataMax = Math.max(...allValues);
-          const range = dataMax - dataMin;
-
-          // Add 15% padding on each side for better visualization
-          const padding = range * 0.15;
-          minVal = Math.max(0.01, dataMin - padding);
-          maxVal = dataMax + padding;
-
-          // Round to nice numbers
-          if (plotSettings.scale === 'log') {
-            minVal = Math.pow(10, Math.floor(Math.log10(minVal)));
-            maxVal = Math.pow(10, Math.ceil(Math.log10(maxVal)));
-          } else {
-            const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
-            minVal = Math.floor(minVal / magnitude) * magnitude;
-            maxVal = Math.ceil(maxVal / magnitude) * magnitude;
-          }
-        }
+        // Auto mode: the whole data range, always including the line of no effect.
+        ({ min: minVal, max: maxVal } = computeAutoAxis(allValues, plotSettings.scale));
       }
 
       // Every drawn x goes through this first: an estimate or a limit outside the
@@ -1012,8 +919,9 @@ function ForestPlotGenerator() {
         }, 'OR (95% CI)')
       );
 
-      // Vertical line at OR=1 (only if 1 is in range)
-      if (minVal < 1.0 && maxVal > 1.0) {
+      // Vertical line at OR=1 (only if 1 is on the axis; a log axis often starts
+      // exactly at 1, which a strict comparison used to leave without the line)
+      if (minVal <= 1 && maxVal >= 1) {
         elements.push(
           React.createElement('line', {
             key: 'vertical-line',
@@ -1245,18 +1153,14 @@ function ForestPlotGenerator() {
 
       // X-axis labels
       tickValues.forEach((val, idx) => {
-        const displayVal = plotSettings.scale === 'log' ?
-          (val >= 1 ? val.toFixed(0) : val.toFixed(2)) :
-          (val >= 10 ? val.toFixed(0) : val.toFixed(1));
-
         elements.push(
           React.createElement('text', {
             key: `xaxis-${idx}`,
             x: xScale(val),
             y: plotHeightPx - margin.bottom + 20,
             textAnchor: 'middle',
-            fontSize: plotSettings.fontSize - 2
-          }, displayVal)
+            fontSize: smallFontSize
+          }, formatTickLabel(val))
         );
       });
 
@@ -1267,7 +1171,7 @@ function ForestPlotGenerator() {
           x: margin.left + plotWidth / 2,
           y: plotHeightPx - 20,
           textAnchor: 'middle',
-          fontSize: plotSettings.fontSize - 2,
+          fontSize: smallFontSize,
           fontStyle: 'italic'
         }, plotSettings.footnote)
       );

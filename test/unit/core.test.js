@@ -253,3 +253,56 @@ test('rows without a position fall back to id order', () => {
   const rows = [{ id: 3, group: '' }, { id: 1, group: '' }, { id: 2, group: '' }];
   assert.deepStrictEqual(sortRowsByPosition(rows).map((r) => r.id), [1, 2, 3]);
 });
+
+// -------------------------------------------------------------------- axis
+
+const { computeAutoAxis, generateSmartTicks, formatTickLabel } = core;
+
+test('tick labels near 1 are all distinct and show their real values', () => {
+  const axis = computeAutoAxis([0.95, 1, 1.05], 'linear');
+  const ticks = generateSmartTicks(axis.min, axis.max, 'linear');
+  const labels = ticks.map(formatTickLabel);
+  assert.deepStrictEqual(labels, ['0.9', '0.95', '1', '1.05', '1.1']);
+  assert.strictEqual(new Set(labels).size, labels.length);
+});
+
+test('linear ticks carry no float drift and never draw 1 twice', () => {
+  const ticks = generateSmartTicks(0.9, 1.1, 'linear');
+  assert.deepStrictEqual(ticks, [0.9, 0.95, 1, 1.05, 1.1]);
+  assert.strictEqual(ticks.filter((t) => Math.abs(t - 1) < 1e-9).length, 1);
+});
+
+test('log tick labels keep small values readable', () => {
+  const labels = generateSmartTicks(0.001, 1, 'log').map(formatTickLabel);
+  assert.ok(labels.includes('0.001'));
+  assert.ok(labels.includes('0.005'));
+  assert.ok(!labels.includes('0.00'));
+});
+
+test('the automatic log axis does not clip rare-event ratios', () => {
+  const axis = computeAutoAxis([0.003, 0.4, 2], 'log');
+  assert.ok(axis.min <= 0.003, `axis starts at ${axis.min}`);
+  assert.ok(axis.max >= 2);
+});
+
+test('the automatic linear axis stays the right way round for tiny ratios', () => {
+  const axis = computeAutoAxis([0.002, 0.005, 0.008], 'linear');
+  assert.ok(axis.min < axis.max);
+  assert.ok(axis.min <= 0.002);
+  assert.ok(axis.min >= 0);
+});
+
+test('the automatic axis always contains the line of no effect', () => {
+  for (const scale of ['linear', 'log']) {
+    for (const values of [[2, 3, 4], [0.2, 0.3, 0.4], [1.2, 1.5, 1.9]]) {
+      const axis = computeAutoAxis(values, scale);
+      assert.ok(axis.min <= 1 && axis.max >= 1, `${scale} ${values}: ${axis.min}-${axis.max}`);
+    }
+  }
+});
+
+test('tick generation is bounded for unusable ranges', () => {
+  assert.deepStrictEqual(generateSmartTicks(1, Infinity, 'linear'), []);
+  assert.deepStrictEqual(generateSmartTicks(2, 1, 'linear'), []);
+  assert.deepStrictEqual(generateSmartTicks(0, 10, 'log'), []);
+});
