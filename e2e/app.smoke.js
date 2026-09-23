@@ -39,6 +39,13 @@ function writeFixtures() {
     'Study,Lower CI,OR,Upper CI,P-value,N,Group\n' +
     'Trial A,1.2,1.5,1.9,0.001,120,Adults\n');
 
+  // An OLE2 header followed by junk: SheetJS rejects it.
+  fs.writeFileSync(path.join(fixtureDir, 'corrupt.xlsx'), Buffer.from([
+    0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, ...new Array(600).fill(7)
+  ]));
+
+  fs.writeFileSync(path.join(fixtureDir, 'header-only.csv'), 'Study,OR,Lower,Upper\n');
+
   fs.writeFileSync(path.join(fixtureDir, 'empty-plots.json'),
     JSON.stringify({ version: '2.0', plots: [] }));
 
@@ -308,6 +315,12 @@ test('Excel imports through the IPC bridge with real column names', async () => 
   assert.ok(options.includes('Odds Ratio'), `got ${JSON.stringify(options)}`);
   assert.ok(!options.includes('0'), 'columns came back as array indices');
 
+  // Columns recognised by name arrive already chosen.
+  const prefilled = await win.evaluate(() =>
+    [...document.querySelectorAll('select')].slice(0, 7).map((sel) => sel.value));
+  assert.deepStrictEqual(prefilled,
+    ['Study', 'Odds Ratio', 'Lower CI', 'Upper CI', 'P-value', 'N', 'Group']);
+
   await win.evaluate(() => {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
     const want = ['Study', 'Odds Ratio', 'Lower CI', 'Upper CI', 'P-value', 'N', 'Group'];
@@ -328,6 +341,47 @@ test('Excel imports through the IPC bridge with real column names', async () => 
   // "N/A" and a blank must stay empty rather than become 1.0 / 0.8.
   assert.strictEqual(rows[2].or, '');
   assert.strictEqual(rows[2].lower, '');
+
+  // Trial C's p-value is "ns": dropped, but not silently.
+  const alerts = await win.evaluate(() => window.__alerts);
+  assert.ok(alerts.some((a) => /1 p-value\(s\) could not be read/.test(a)),
+    `alerts were ${JSON.stringify(alerts)}`);
+});
+
+test('a corrupt spreadsheet is reported cleanly and the app keeps working', async () => {
+  await win.evaluate(() => { window.__alerts = []; });
+  await win.locator('input[accept=".xlsx"]').setInputFiles(path.join(fixtureDir, 'corrupt.xlsx'));
+  await win.waitForTimeout(2500);
+
+  const alerts = await win.evaluate(() => window.__alerts);
+  assert.strictEqual(alerts.length, 1, `alerts were ${JSON.stringify(alerts)}`);
+  assert.match(alerts[0], /^Error uploading file: /);
+  // Electron's IPC wrapper text must not reach the user.
+  assert.ok(!/invoking remote method/.test(alerts[0]), alerts[0]);
+  assert.strictEqual(await win.locator('text=Import from Excel').count(), 0);
+});
+
+test('a row without a p-value does not end in a dangling "p="', async () => {
+  const toggle = win.locator('label').filter({ hasText: 'Show P-Values' }).locator('input');
+  await toggle.check();
+  await win.waitForTimeout(800);
+  const texts = await win.evaluate(() =>
+    [...document.querySelectorAll('svg text')].map((t) => t.textContent));
+  assert.ok(texts.some((t) => /p=0\.001$/.test(t)), 'p-values are not shown at all');
+  assert.ok(!texts.some((t) => /p=\s*$/.test(t)), `dangling p=: ${JSON.stringify(texts)}`);
+  await toggle.uncheck();
+  await win.waitForTimeout(500);
+});
+
+test('a CSV with no data rows leaves the current data alone', async () => {
+  const before = await tableRows();
+  await win.evaluate(() => { window.__alerts = []; });
+  await win.locator('input[accept=".csv"]').setInputFiles(path.join(fixtureDir, 'header-only.csv'));
+  await win.waitForTimeout(1500);
+
+  const alerts = await win.evaluate(() => window.__alerts);
+  assert.ok(alerts.some((a) => /No data rows/.test(a)), `alerts were ${JSON.stringify(alerts)}`);
+  assert.deepStrictEqual(await tableRows(), before);
 });
 
 test('a project with no plots is rejected without taking the app down', async () => {
@@ -385,9 +439,9 @@ test('reloading, the crash screen\'s way out, still works', async () => {
 });
 
 test('nothing logged an unexpected error along the way', () => {
-  // The rejected-project test deliberately provokes one console.error; anything
-  // else is a real fault.
-  const expected = /Load error:.*(no plots|not look like a Forest Plot)/;
+  // The rejected-project and corrupt-spreadsheet tests deliberately provoke
+  // console.errors; anything else is a real fault.
+  const expected = /Load error:.*(no plots|not look like a Forest Plot)|File upload error:.*Major Version/;
   const unexpected = consoleErrors.filter((e) => !expected.test(e));
   assert.deepStrictEqual(unexpected, []);
   assert.ok(consoleErrors.some((e) => expected.test(e)),

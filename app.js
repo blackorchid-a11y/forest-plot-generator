@@ -6,7 +6,8 @@ const {
   computeAutoAxis, generateSmartTicks, formatTickLabel,
   formatNumber, formatEstimate, formatPValue,
   parseNumericInput, toNumber,
-  buildRow, buildRowsFromRecords, describeMapping,
+  buildRowsFromRecords, buildRowsWithMapping, describeImportProblems, describeMapping,
+  resolveColumns,
   validateProject, sortRowsByPosition, groupRowsIntoSections
 } = ForestPlotCore;
 
@@ -126,6 +127,10 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
     group: ''
   });
 
+  // Every keystroke in the range fields asks for a new preview, and replies can
+  // arrive out of order; only the newest request may update the preview.
+  const previewRequest = useRef(0);
+
   useEffect(() => {
     if (excelData && selectedSheet) {
       generatePreview();
@@ -133,12 +138,13 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
   }, [selectedSheet, cellRange, hasHeaders]);
 
   const generatePreview = async () => {
+    const request = ++previewRequest.current;
     try {
       const { rows } = await readSheetRows(excelData.handle, selectedSheet, cellRange, hasHeaders);
-      setPreviewData(rows.slice(0, 5));
+      if (request === previewRequest.current) setPreviewData(rows.slice(0, 5));
     } catch (error) {
       console.error('Preview error:', error);
-      setPreviewData([]);
+      if (request === previewRequest.current) setPreviewData([]);
     }
   };
 
@@ -147,20 +153,45 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
     return Object.keys(previewData[0]);
   };
 
+  // When the columns change (another sheet, range, or the headers box), the
+  // old choices may name columns that no longer exist. Start again from the
+  // ones recognised by name, which also spares mapping every field by hand.
+  const columnsKey = JSON.stringify(getColumns());
+  useEffect(() => {
+    const columns = getColumns();
+    const { mapping, matchedByName } = resolveColumns(columns);
+    const next = {};
+    Object.keys(columnMapping).forEach((field) => {
+      next[field] = matchedByName[field] ? mapping[field] : '';
+    });
+    setColumnMapping(next);
+  }, [columnsKey]);
+
+  const chooseSheet = async (sheet) => {
+    try {
+      const range = await sheetUsedRange(excelData.handle, sheet);
+      setSelectedSheet(sheet);
+      setCellRange(range);
+      setStep(2);
+    } catch (error) {
+      console.error('Sheet error:', error);
+      alert(`Could not read sheet "${sheet}": ${error.message}`);
+    }
+  };
+
   const importData = async () => {
     try {
       const { rows, truncated } = await readSheetRows(excelData.handle, selectedSheet, cellRange, hasHeaders);
 
+      if (rows.length === 0) {
+        alert('There are no data rows in that range, so nothing was imported.');
+        return;
+      }
+
       // The wizard's own mapping wins; unreadable cells become null rather than
       // a plausible default, and are reported back to the user.
-      let unreadableCount = 0;
-      const parsed = rows.map((row, idx) => {
-        const built = buildRow(row, columnMapping, idx);
-        if (built.unreadable) unreadableCount += 1;
-        return built.row;
-      });
-
-      onImport(parsed, selectedSheet, unreadableCount, truncated);
+      const built = buildRowsWithMapping(rows, columnMapping);
+      onImport(built.rows, selectedSheet, { ...built, truncated });
     } catch (error) {
       console.error('Import error:', error);
       alert('Error importing data: ' + error.message);
@@ -198,11 +229,7 @@ function ExcelImportWizard({ excelData, onImport, onCancel }) {
           excelData?.sheets.map(sheet =>
             React.createElement('button', {
               key: sheet,
-              onClick: async () => {
-                setSelectedSheet(sheet);
-                setCellRange(await sheetUsedRange(excelData.handle, sheet));
-                setStep(2);
-              },
+              onClick: () => chooseSheet(sheet),
               className: 'w-full p-4 border rounded hover:bg-blue-50 text-left font-medium'
             }, sheet)
           )
@@ -460,21 +487,19 @@ function ForestPlotGenerator() {
     updateActivePlot({ data: newData });
   };
 
-  const handleExcelImport = (parsed, sheetName, unreadableCount = 0, truncated = false) => {
+  const handleExcelImport = (parsed, sheetName, summary = {}) => {
     updateActivePlot({ data: parsed });
     if (excelData && window.xlsxBridge) window.xlsxBridge.close(excelData.handle);
     setShowExcelImport(false);
     setExcelData(null);
+    const problems = describeImportProblems(summary);
     alert(
       `Imported ${parsed.length} rows from ${sheetName}.` +
-      (truncated
+      (summary.truncated
         ? '\n\nThe requested range was larger than the sheet, so only the part ' +
           'containing data was read.'
         : '') +
-      (unreadableCount > 0
-        ? `\n\n${unreadableCount} row(s) had values that could not be read; ` +
-          'those fields were left empty and will not be plotted.'
-        : '')
+      (problems ? `\n\n${problems}` : '')
     );
   };
 
@@ -503,18 +528,25 @@ function ForestPlotGenerator() {
               // order only for headers that cannot be recognised. Mapping by
               // position alone silently swapped OR and lower CI in any file
               // that did not use the expected column order.
-              const { rows, mapping, matchedByName, unreadableCount } =
-                buildRowsFromRecords(rawData, headers);
+              const built = buildRowsFromRecords(rawData, headers);
 
-              updateActivePlot({ data: rows });
+              // An empty or header-only file must not wipe the current plot.
+              if (built.rows.length === 0) {
+                alert('No data rows were found in this CSV file, so nothing was imported.');
+                return;
+              }
+
+              const malformedLineCount = new Set(
+                (results.errors || []).map((error) => error.row)
+              ).size;
+              const problems = describeImportProblems({ ...built, malformedLineCount });
+
+              updateActivePlot({ data: built.rows });
               setInputMode('manual');
               alert(
-                `Imported ${rows.length} rows from CSV.\n\nColumns used:\n` +
-                describeMapping(mapping, matchedByName) +
-                (unreadableCount > 0
-                  ? `\n\n${unreadableCount} row(s) had values that could not be read; ` +
-                    'those fields were left empty and will not be plotted.'
-                  : '')
+                `Imported ${built.rows.length} rows from CSV.\n\nColumns used:\n` +
+                describeMapping(built.mapping, built.matchedByName) +
+                (problems ? `\n\n${problems}` : '')
               );
             } catch (error) {
               console.error('CSV parsing error:', error);
@@ -543,6 +575,13 @@ function ForestPlotGenerator() {
     }
 
     e.target.value = '';
+  };
+
+  // " p=0.03" when p-values are shown and the row has one; a row without a
+  // p-value used to end in a dangling "p=".
+  const pValueSuffixFor = (showPValues) => (pValue) => {
+    const text = formatPValue(pValue);
+    return showPValues && text ? ` p=${text}` : '';
   };
 
   const getBarColor = (row) => {
@@ -826,6 +865,7 @@ function ForestPlotGenerator() {
       // Axis labels and the footnote sit a little below the body text; a font
       // size of 1 or 2 would otherwise give them a zero or negative size.
       const smallFontSize = Math.max(1, plotSettings.fontSize - 2);
+      const pValueSuffix = pValueSuffixFor(plotSettings.showPValues);
 
       const validData = plotData.filter(d => isValidData(d));
       const allValues = validData.flatMap(d => [d.lowerCI, d.or, d.upperCI]);
@@ -1076,9 +1116,8 @@ function ForestPlotGenerator() {
                   x: plotWidthPx - margin.right + 10,
                   y: y + 5,
                   textAnchor: 'start'
-                }, plotSettings.showPValues ?
-                  `${formatNumber(row.or)} (${formatNumber(row.lowerCI)}-${formatNumber(row.upperCI)}) p=${formatPValue(row.pValue)}` :
-                  `${formatNumber(row.or)} (${formatNumber(row.lowerCI)}-${formatNumber(row.upperCI)})`
+                }, `${formatNumber(row.or)} (${formatNumber(row.lowerCI)}-${formatNumber(row.upperCI)})` +
+                  pValueSuffix(row.pValue)
                 )
               )
             );

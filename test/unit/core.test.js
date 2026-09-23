@@ -306,3 +306,45 @@ test('tick generation is bounded for unusable ranges', () => {
   assert.deepStrictEqual(generateSmartTicks(2, 1, 'linear'), []);
   assert.deepStrictEqual(generateSmartTicks(0, 10, 'log'), []);
 });
+
+// ------------------------------------------------------------------ import
+
+const { buildRowsWithMapping, describeImportProblems } = core;
+
+test('comma decimals with a zero whole part are read, thousands groups are not', () => {
+  assert.strictEqual(parseNumericCell('0,025'), 0.025);
+  assert.strictEqual(parseNumericCell('0,001'), 0.001);
+  assert.strictEqual(parseNumericCell('-0,125'), -0.125);
+  assert.strictEqual(parseNumericCell(',5'), 0.5);
+  assert.strictEqual(parseNumericCell('1,5'), 1.5);
+  assert.strictEqual(parseNumericCell('1,520'), null);
+});
+
+test('common spellings of the confidence limits are matched by name', () => {
+  const cases = [
+    ['Study', 'OR', 'P-value', 'Lower 95% CI', 'Upper 95% CI'],
+    ['Study', 'OR', '95% CI lower', '95% CI upper', 'P'],
+    ['Trial', 'HR', 'LL', 'UL', 'p']
+  ];
+  cases.forEach((headers) => {
+    const { mapping, matchedByName } = resolveColumns(headers);
+    assert.ok(matchedByName.lowerCI && matchedByName.upperCI, JSON.stringify(headers));
+    assert.ok(/lower|ll/i.test(mapping.lowerCI), `lower -> ${mapping.lowerCI}`);
+    assert.ok(/upper|ul/i.test(mapping.upperCI), `upper -> ${mapping.upperCI}`);
+  });
+});
+
+test('a written but unreadable p-value is counted, a blank one is not', () => {
+  const mapping = { variable: 'S', or: 'OR', lowerCI: 'L', upperCI: 'U', pValue: 'P' };
+  const records = [
+    { S: 'a', OR: 1.5, L: 1.2, U: 1.9, P: 'ns' },
+    { S: 'b', OR: 1.5, L: 1.2, U: 1.9, P: '' },
+    { S: 'c', OR: 1.5, L: 1.2, U: 1.9, P: '0,03' }
+  ];
+  const built = buildRowsWithMapping(records, mapping);
+  assert.strictEqual(built.pValueUnreadableCount, 1);
+  assert.strictEqual(built.unreadableCount, 0);
+  assert.strictEqual(built.rows[2].pValue, 0.03);
+  assert.match(describeImportProblems(built), /1 p-value\(s\) could not be read/);
+  assert.strictEqual(describeImportProblems({}), '');
+});
