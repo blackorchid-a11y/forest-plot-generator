@@ -5,7 +5,7 @@ All notable changes to the Forest Plot Generator will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.2.0] - 2026-09-23
 
 ### Added
 - **Random-effects meta-analysis.** Under *Meta-analysis Mode*, each plot can pool with a fixed-effect (inverse variance, as before) or a DerSimonian–Laird random-effects model. The pooled row names its model, and with two or more studies a heterogeneity line reports I², the Cochran's Q p-value and, for random effects, τ². Existing projects keep fixed effect.

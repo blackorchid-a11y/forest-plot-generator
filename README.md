@@ -1,6 +1,34 @@
-# Forest Plot Generator v3.1.0
+# Forest Plot Generator v3.2.0
 
 A professional desktop application for generating publication-ready forest plots with **multi-plot support**, advanced customization options, and smart axis controls.
+
+## 🌟 What's New in v3.2.0
+
+### New: random-effects meta-analysis
+- Under **Meta-analysis Mode**, choose the pooling **Model**: fixed effect (inverse
+  variance, as before) or **random effects (DerSimonian–Laird)**, which allows the true
+  effect to vary between studies.
+- With two or more studies, a **heterogeneity line** reports I², the Cochran's Q p-value
+  and, for random effects, τ². Existing projects keep fixed effect.
+
+### Fixed: plots
+- **Axis labels show their real values.** An axis around 1 printed 0.95 as "1.0" next to
+  the real 1.0; small log ticks printed "0.00".
+- **The automatic axis never cuts off data** and always shows the line of no effect.
+  Ratios below 0.01 used to be pinned to the edge, or even flip the axis.
+- **Negative "Space After Section Title" works again** (3.1.0 quietly turned it into 5).
+
+### Fixed: imports and safety
+- **Dropping a file on the window no longer replaces the app** and loses unsaved work.
+- **Excel files are read by an updated SheetJS in an isolated process**, closing two
+  known vulnerabilities in the old version and stopping a bad file from freezing the app.
+- European p-values (`0,025`) are read, more CI column names are recognised, unreadable
+  p-values are reported, and an empty file no longer wipes your data.
+- If the editor ever crashes, the error screen lets you **download a backup** of your work.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
+---
 
 ## 🌟 What's New in v3.1.0
 
@@ -135,7 +163,7 @@ Perfect for:
 ## 🚀 Getting Started
 
 ### Installation
-1. Download the latest release (v3.1.0)
+1. Download the latest release (v3.2.0)
 2. Run the installer (Windows or macOS)
 3. Launch Forest Plot Generator
 
@@ -380,7 +408,7 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 ### Troubleshooting
 - Check the FAQ section in NEW_FEATURES_v3.0.0.md
 - Review MIGRATION_GUIDE_v3.0.0.md for common issues
-- Ensure you're running the latest version (v3.1.0)
+- Ensure you're running the latest version (v3.2.0)
 
 ### Reporting Issues
 For bugs, questions, or feature requests:
@@ -416,7 +444,7 @@ Built with modern web technologies for a native desktop experience:
 
 ---
 
-**Version:** 3.1.0 - Correctness Release  
+**Version:** 3.2.0 - Random Effects Release  
 **Release Date:** September 2026  
 **Platform:** Windows & macOS  
 **Build:** Electron 28
