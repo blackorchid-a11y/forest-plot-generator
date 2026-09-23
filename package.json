@@ -47,6 +47,6 @@
     "tailwindcss": "^3.4.19"
   },
   "dependencies": {
-    "xlsx": "^0.18.5"
+    "xlsx": "npm:@e965/xlsx@0.20.3"
   }
 }
