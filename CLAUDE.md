@@ -144,6 +144,13 @@ The app is built using electron-builder:
 - **Windows**: NSIS installer (.exe)
 - **macOS**: DMG package
 
+To release, bump `version` in `package.json` and promote the CHANGELOG's
+`[Unreleased]` section, merge that to `main`, then publish a GitHub Release with a
+new `vX.Y.Z` tag on `main`. Publishing runs `.github/workflows/build.yml`, which
+tests the tag, builds both installers and attaches them to the release (about four
+minutes). If attaching fails, re-run the workflow by hand (`workflow_dispatch`) with
+`release_tag` set to the tag; that rebuilds the tag and replaces the release's files.
+
 ## GitHub Repository
 - Repository is tracked in `.git/`
 - Check remote URL: `git remote -v`

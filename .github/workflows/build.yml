@@ -4,7 +4,20 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  # Publishing a GitHub Release tests and builds the release's tag and attaches
+  # both installers to the release.
+  release:
+    types: [ published ]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Re-attach installers to this existing release (e.g. v3.2.0). Leave empty for a plain build.'
+        required: false
+        default: ''
+
+env:
+  # Non-empty only when the installers should be attached to a release.
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
 
 jobs:
   test:
@@ -12,6 +25,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.RELEASE_TAG }}
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -43,9 +58,13 @@ jobs:
   build-windows:
     needs: test
     runs-on: windows-latest
+    permissions:
+      contents: write
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.RELEASE_TAG }}
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -66,12 +85,25 @@ jobs:
         name: windows-installer
         path: dist/*.exe
 
+    # Release runs only. GitHub turns the spaces in the file name into dots:
+    # Forest.Plot.Generator.Setup.<version>.exe. bash, so the glob expands.
+    - name: Attach installer to the release
+      if: env.RELEASE_TAG != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release upload "$RELEASE_TAG" dist/*Setup*.exe --clobber --repo "$GITHUB_REPOSITORY"
+
   build-macos:
     needs: test
     runs-on: macos-latest
+    permissions:
+      contents: write
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.RELEASE_TAG }}
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -91,3 +123,11 @@ jobs:
       with:
         name: macos-installer
         path: dist/*.dmg
+
+    # Release runs only: Forest.Plot.Generator-<version>-arm64.dmg.
+    - name: Attach installer to the release
+      if: env.RELEASE_TAG != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release upload "$RELEASE_TAG" dist/*.dmg --clobber --repo "$GITHUB_REPOSITORY"

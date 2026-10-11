@@ -445,7 +445,7 @@ Built with modern web technologies for a native desktop experience:
 ---
 
 **Version:** 3.2.0 - Random Effects Release  
-**Release Date:** September 2026  
+**Release Date:** October 2026  
 **Platform:** Windows & macOS  
 **Build:** Electron 28
 
